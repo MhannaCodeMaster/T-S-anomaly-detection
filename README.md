@@ -1,2 +1,1 @@
-# T-S-anomaly-detection
-Anomaly detection using Teacher-Student model with RPN and Triplet learning.
+# Enhancing Teacher-Student Learning with Region Proposal Networks and Contrastive Triplet Learning for Unsupervised Anomaly Detection and Localization
