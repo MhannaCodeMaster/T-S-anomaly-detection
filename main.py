@@ -20,8 +20,8 @@ from data.data_utils import load_ground_truth
 from config.config import load_args, load_config
 
 def main():
-    config = load_config()
     args = load_args()
+    config = load_config(args.config)
     
     for key, value in config.items():
         if getattr(args, key) is None:

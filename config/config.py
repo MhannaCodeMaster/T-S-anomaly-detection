@@ -1,26 +1,22 @@
 import argparse
 import yaml
 
-def load_config():
+def load_config(config_path):
     """
-    Loads configuration from a YAML file specified by the --config argument.
+    Loads configuration from a YAML file .
 
     Returns:
         dict: Configuration loaded from the YAML file.
     """
-    parser = argparse.ArgumentParser(description="Configuration Loader")
-    parser.add_argument("--config", type=str, required=True, help="Path to the YAML configuration file")
-    args = parser.parse_args()
-        
     try:
-        with open(args.config, 'r') as file:
+        with open(config_path, 'r') as file:
             try:
                 config = yaml.safe_load(file)
             except yaml.YAMLError as exc:
                 print(f"Error parsing YAML file: {exc}")
                 raise
     except FileNotFoundError:
-        print(f"Config file not found: {args.config}")
+        print(f"Config file not found: {config_path}")
         raise
     except Exception as e:
         print(f"Unexpected error reading config file: {e}")
