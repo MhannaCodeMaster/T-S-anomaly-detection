@@ -36,14 +36,14 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    if args.split == 'train':
+    if args.mode == 'train':
         image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
         train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
         train_dataset = MVTecDataset(train_image_list, transform=transform)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=False)
         val_dataset = MVTecDataset(val_image_list, transform=transform)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    elif args.split == 'test':
+    elif args.mode == 'test':
         test_neg_image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'test', 'good', '*.png')))
         test_pos_image_list = set(glob(os.path.join(args.mvtec_ad, args.category, 'test', '*', '*.png'))) - set(test_neg_image_list)
         test_pos_image_list = sorted(list(test_pos_image_list))
@@ -57,9 +57,9 @@ def main():
     teacher.cuda()
     student.cuda()
 
-    if args.split == 'train':
+    if args.mode == 'train':
         train_val(teacher, student, train_loader, val_loader, args)
-    elif args.split == 'test':
+    elif args.mode == 'test':
         saved_dict = torch.load(args.checkpoint)
         category = args.category
         gt = load_ground_truth(args.mvtec_ad, category)
