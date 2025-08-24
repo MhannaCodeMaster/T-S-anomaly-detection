@@ -37,12 +37,15 @@ def main():
     ])
 
     if args.mode == 'train':
+        print("Dataset path: " ,glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
         image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
         train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
         train_dataset = MVTecDataset(train_image_list, transform=transform)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=False)
+        print("Training dataset loaded")
         val_dataset = MVTecDataset(val_image_list, transform=transform)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
+        print("Validation dataset loaded")
     elif args.mode == 'test':
         test_neg_image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'test', 'good', '*.png')))
         test_pos_image_list = set(glob(os.path.join(args.mvtec_ad, args.category, 'test', '*', '*.png'))) - set(test_neg_image_list)
