@@ -1,0 +1,196 @@
+import argparse
+import os
+import cv2
+import numpy as np
+
+import torch
+import torch.optim
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torchvision import transforms
+
+from evaluate import evaluate
+from sklearn.model_selection import train_test_split
+from glob import glob
+
+from models.teacher import ResNet18_MS3
+from data.mvtec_dataset import MVTecDataset
+from data.data_utils import load_ground_truth
+
+from config.config import load_args, load_config
+
+def main():
+    config = load_config()
+    args = load_args()
+    
+    for key, value in config.items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
+    
+    np.random.seed(0)
+    torch.manual_seed(0)
+    
+    transform = transforms.Compose([
+        transforms.Resize([256, 256]),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    if args.split == 'train':
+        image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
+        train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
+        train_dataset = MVTecDataset(train_image_list, transform=transform)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=False)
+        val_dataset = MVTecDataset(val_image_list, transform=transform)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
+    elif args.split == 'test':
+        test_neg_image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'test', 'good', '*.png')))
+        test_pos_image_list = set(glob(os.path.join(args.mvtec_ad, args.category, 'test', '*', '*.png'))) - set(test_neg_image_list)
+        test_pos_image_list = sorted(list(test_pos_image_list))
+        test_neg_dataset = MVTecDataset(test_neg_image_list, transform=transform)
+        test_pos_dataset = MVTecDataset(test_pos_image_list, transform=transform)
+        test_neg_loader = DataLoader(test_neg_dataset, batch_size=1, shuffle=False, drop_last=False)
+        test_pos_loader = DataLoader(test_pos_dataset, batch_size=1, shuffle=False, drop_last=False)
+
+    teacher = ResNet18_MS3(pretrained=True)
+    student = ResNet18_MS3(pretrained=False)
+    teacher.cuda()
+    student.cuda()
+
+    if args.split == 'train':
+        train_val(teacher, student, train_loader, val_loader, args)
+    elif args.split == 'test':
+        saved_dict = torch.load(args.checkpoint)
+        category = args.category
+        gt = load_ground_truth(args.mvtec_ad, category)
+
+        print('load ' + args.checkpoint)
+        student.load_state_dict(saved_dict['state_dict'])
+
+        pos = test(teacher, student, test_pos_loader)
+        neg = test(teacher, student, test_neg_loader)
+
+        scores = []
+        for i in range(len(pos)):
+            temp = cv2.resize(pos[i], (256, 256))
+            scores.append(temp)
+        for i in range(len(neg)):
+            temp = cv2.resize(neg[i], (256, 256))
+            scores.append(temp)
+
+        scores = np.stack(scores)
+        neg_gt = np.zeros((len(neg), 256, 256), dtype=np.bool)
+        gt_pixel = np.concatenate((gt, neg_gt), 0)
+        gt_image = np.concatenate((np.ones(pos.shape[0], dtype=np.bool), np.zeros(neg.shape[0], dtype=np.bool)), 0)        
+
+        pro = evaluate(gt_pixel, scores, metric='pro')
+        auc_pixel = evaluate(gt_pixel.flatten(), scores.flatten(), metric='roc')
+        auc_image_max = evaluate(gt_image, scores.max(-1).max(-1), metric='roc')
+        print('Catergory: {:s}\tPixel-AUC: {:.6f}\tImage-AUC: {:.6f}\tPRO: {:.6f}'.format(category, auc_pixel, auc_image_max, pro))
+     
+
+
+def test(teacher, student, loader):
+    """Testing function to compute anomaly score maps."""
+    print("Testing started...")
+    teacher.eval()
+    student.eval()
+    # Pre-allocate array to store the anomaly score map per image (64x64 resolution)
+    loss_map = np.zeros((len(loader.dataset), 64, 64))
+    i = 0 # Tracks where to write each batch of results in the pre-allocated array.
+    
+    # Iterate over the data loader
+    for batch_data in loader:
+        _, batch_img = batch_data # Each batch_data is a tuple (image_path, image_tensor)
+        batch_img = batch_img.cuda() # Moving the image tensor to GPU
+
+        # Foward pass      
+        with torch.no_grad():
+            t_feat = teacher(batch_img)
+            s_feat = student(batch_img)
+        score_map = 1.
+        
+        # Per-level mismatch -> upsample -> aggregate.
+        for j in range(len(t_feat)):
+            # Normalize the feature maps along the channel dimension -> removed scale effects, comapres direction of features.
+            t_feat[j] = F.normalize(t_feat[j], dim=1)
+            s_feat[j] = F.normalize(s_feat[j], dim=1)
+            # Compute per-pixel squared L2 distance across channels -> a dense anomaly map for that layer.
+            sm = torch.sum((t_feat[j] - s_feat[j]) ** 2, 1, keepdim=True)
+            # Interpolate the score map to a common resolution (64x64)
+            sm = F.interpolate(sm, size=(64, 64), mode='bilinear', align_corners=False)
+            # aggregate score map by element-wise product
+            score_map = score_map * sm
+        
+        # Store batch results into the big buffer.
+        # Converts the final score map to NumPy and writes it to the correct slice of loss_map. 
+        loss_map[i: i + batch_img.size(0)] = score_map.squeeze().cpu().data.numpy()
+        # Advances the index by the batch size.
+        i += batch_img.size(0)
+    
+    print("Testing completed.")    
+    # Returns an (N, 64, 64) array of anomaly score maps, where N is the number of images (Higher = more anomalous).
+    return loss_map
+    
+
+def train_val(teacher, student, train_loader, val_loader, args):
+    print("Training started...")
+    min_err = 10000 # Stores the best validation error so far.
+    teacher.eval()  # Teacher model is forzen
+    student.train() # Student model is set to training mode
+    
+    # Using SGD optimizer for training the student model
+    optimizer = torch.optim.SGD(student.parameters(), 0.4, momentum=0.9, weight_decay=1e-4)
+    # Main training loop
+    for epoch in range(args.epochs):
+        student.train()
+        running_loss = 0.0
+        num_batches = 0
+        
+        # Training loop per batch
+        for batch_data in train_loader:
+            _, batch_img = batch_data
+            batch_img = batch_img.cuda()
+
+            # Feeding images for both teacher and student networks
+            with torch.no_grad():
+                # Teacher ouputs are treated as the target feature maps.
+                t_feat = teacher(batch_img) # Teacher feature extraction (frozen)
+            s_feat = student(batch_img)     # Student feature extraction (to be trained)
+
+            loss =  0
+            for i in range(len(t_feat)):
+                # Both teacher and student features are L2-normalized (F.normalize).
+                t_feat[i] = F.normalize(t_feat[i], dim=1)
+                s_feat[i] = F.normalize(s_feat[i], dim=1)
+                # The loss = average squared distance between the teacher and student features, summed over feature levels.
+                loss += torch.sum((t_feat[i] - s_feat[i]) ** 2, 1).mean()
+
+            print('[%d/%d] loss: %f' % (epoch, args.epochs, loss.item()))
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+            num_batches += 1
+        
+        avg_train_loss = running_loss / num_batches
+        print(f'Epoch [{epoch+1}/{args.epochs}] - Average Training Loss: {avg_train_loss:.6f}')
+
+        # Runs the test() function on the validation set.
+        err = test(teacher, student, val_loader).mean()
+        print('Valid Loss: {:.7f}'.format(err.item()))
+        if err < min_err:
+            min_err = err
+            save_name = os.path.join(args.model_save_path, args.category, 'best.pth.tar')
+            dir_name = os.path.dirname(save_name)
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name)
+            state_dict = {
+                'category': args.category,
+                'state_dict': student.state_dict()
+            }
+            torch.save(state_dict, save_name)
+    print("Training completed.")
+    
+if __name__ == "__main__":
+    main()
