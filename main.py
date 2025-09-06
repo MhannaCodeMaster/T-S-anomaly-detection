@@ -2,6 +2,7 @@ import argparse
 import os
 import cv2
 import numpy as np
+from pathlib import Path
 
 import torch
 import torch.optim
@@ -180,10 +181,14 @@ def train_val(teacher, student, train_loader, val_loader, args):
         print(f'Epoch [{epoch+1}/{args.epochs}] - Average Training Loss: {avg_train_loss:.6f}')
 
         # Runs the test() function on the validation set.
-        err = test(teacher, student, val_loader).mean()
+        err = test(teacher, student, val_loader)
+        
+        apply_threshold(err, val_loader)
+        
+        err_mean = err.mean()
         print('Valid Loss: {:.7f}'.format(err.item()))
-        if err < min_err:
-            min_err = err
+        if err_mean < min_err:
+            min_err = err_mean
             save_name = os.path.join(args.model_save_path, args.category, 'best.pth.tar')
             dir_name = os.path.dirname(save_name)
             if dir_name and not os.path.exists(dir_name):
@@ -195,5 +200,47 @@ def train_val(teacher, student, train_loader, val_loader, args):
             torch.save(state_dict, save_name)
     print("Training completed.")
     
+def normalize_01(x: np.ndarray):
+    x = x.astype(np.float32)
+    mn, mx = float(x.min()), float(x.max())
+    if mx <= mn:
+        return np.zeros_like(x, dtype=np.float32)
+    return (x - mn) / (mx - mn)
+    
+def upscale_heatmap_to_image(hm64: np.ndarray, target_hw):
+    H, W = target_hw
+    hm_up = cv2.resize(hm64.astype(np.float32), (W, H), interpolation=cv2.INTER_CUBIC)
+    hm_up = normalize_01(hm_up)
+    return hm_up
+
+def apply_threshold(loss_map, val_loader):
+    out_dir = "outputs/step1_upscaled"
+    os.makedirs(out_dir, exist_ok=True)
+    
+    idx = 0
+    for batch in val_loader:
+        img_paths, _ = batch
+        
+        bs = len(img_paths)
+        hm_batch = loss_map[idx: idx + bs]
+        idx += bs
+        
+        for k, p in enumerate(img_paths):
+            hm64 = hm_batch[k]
+            img = cv2.imread(p)
+            if img is None:
+                print(f"Warning: Unable to read image at {p}. Skipping.")
+                continue
+            
+            H, W = img.shape[:2]
+            hm_up = upscale_heatmap_to_image(hm64, (H, W))
+            hm_gray = (hm_up * 255.0).astype(np.uint8)
+            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_hm.png"), hm_gray)
+            
+            hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
+            overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
+            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_overlay.png", overlay))
+    
+
 if __name__ == "__main__":
     main()
