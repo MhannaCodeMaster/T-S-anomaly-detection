@@ -186,7 +186,7 @@ def train_val(teacher, student, train_loader, val_loader, args):
         apply_threshold(err, val_loader)
         
         err_mean = err.mean()
-        print('Valid Loss: {:.7f}'.format(err.item()))
+        print('Valid Loss: {:.7f}'.format(err_mean.item()))
         if err_mean < min_err:
             min_err = err_mean
             save_name = os.path.join(args.model_save_path, args.category, 'best.pth.tar')
@@ -227,20 +227,19 @@ def apply_threshold(loss_map, val_loader):
         
         for k, p in enumerate(img_paths):
             hm64 = hm_batch[k]
-            print(p)
-            # img = cv2.imread(p)
-            # if img is None:
-            #     print(f"Warning: Unable to read image at {p}. Skipping.")
-            #     continue
+            img = cv2.imread(p)
+            if img is None:
+                print(f"Warning: Unable to read image at {p}. Skipping.")
+                continue
             
-            # H, W = img.shape[:2]
-            # hm_up = upscale_heatmap_to_image(hm64, (H, W))
-            # hm_gray = (hm_up * 255.0).astype(np.uint8)
-            # cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_hm.png"), hm_gray)
+            H, W = img.shape[:2]
+            hm_up = upscale_heatmap_to_image(hm64, (H, W))
+            hm_gray = (hm_up * 255.0).astype(np.uint8)
+            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_hm.png"), hm_gray)
             
-            # hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
-            # overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
-            # cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_overlay.png"), overlay)
+            hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
+            overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
+            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_overlay.png"), overlay)
     
 
 if __name__ == "__main__":
