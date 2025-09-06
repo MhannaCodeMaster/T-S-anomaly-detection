@@ -229,18 +229,18 @@ def apply_threshold(loss_map, val_loader):
             hm64 = hm_batch[k]
             img = cv2.imread(p)
             print(p)
-            if img is None:
-                print(f"Warning: Unable to read image at {p}. Skipping.")
-                continue
+            # if img is None:
+            #     print(f"Warning: Unable to read image at {p}. Skipping.")
+            #     continue
             
-            H, W = img.shape[:2]
-            hm_up = upscale_heatmap_to_image(hm64, (H, W))
-            hm_gray = (hm_up * 255.0).astype(np.uint8)
-            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_hm.png"), hm_gray)
+            # H, W = img.shape[:2]
+            # hm_up = upscale_heatmap_to_image(hm64, (H, W))
+            # hm_gray = (hm_up * 255.0).astype(np.uint8)
+            # cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_hm.png"), hm_gray)
             
-            hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
-            overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
-            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}__overlay.png"), overlay)
+            # hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
+            # overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
+            # cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_overlay.png"), overlay)
     
 
 if __name__ == "__main__":
