@@ -1,4 +1,4 @@
-split: test
+mode: test
 category: leather
 checkpoint: checkpoints/student.pth
 checkpoint_epoch: 100

@@ -1,4 +1,4 @@
-split: train
+mode: train
 category: leather
 epochs: 100
 batch_size: 32
