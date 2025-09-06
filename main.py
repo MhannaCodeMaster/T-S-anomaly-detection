@@ -239,7 +239,7 @@ def apply_threshold(loss_map, val_loader):
             
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
-            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_overlay.png", overlay))
+            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_overlay.png"), overlay)
     
 
 if __name__ == "__main__":
