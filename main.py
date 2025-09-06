@@ -227,8 +227,8 @@ def apply_threshold(loss_map, val_loader):
         
         for k, p in enumerate(img_paths):
             hm64 = hm_batch[k]
-            img = cv2.imread(p)
             print(p)
+            # img = cv2.imread(p)
             # if img is None:
             #     print(f"Warning: Unable to read image at {p}. Skipping.")
             #     continue
