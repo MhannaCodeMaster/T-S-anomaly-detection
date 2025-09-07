@@ -38,7 +38,7 @@ def main():
     ])
 
     if args.mode == 'train':
-        print("Dataset path: " ,glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
+        #print("Dataset path: " ,glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
         image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
         train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
         train_dataset = MVTecDataset(train_image_list, transform=transform)
@@ -184,7 +184,7 @@ def train_val(teacher, student, train_loader, val_loader, args):
         err = test(teacher, student, val_loader)
         
         if epoch%20 == 0:
-            apply_threshold(err, val_loader)
+            apply_threshold(err, val_loader, epoch)
         
         err_mean = err.mean()
         print('Valid Loss: {:.7f}'.format(err_mean.item()))
