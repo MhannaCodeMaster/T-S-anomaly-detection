@@ -230,7 +230,7 @@ def upscale_heatmap_to_image(hm64: np.ndarray, target_hw):
     hm_up = normalize_01(hm_up)
     return hm_up
 
-def threshold_heatmap(hm_up, method="otsu", percentile=99.5):
+def threshold_heatmap(hm_up, method="percentile", percentile=99.5):
     """
     hm_up: (H,W) float in [0,1]
     Returns: (mask_uint8, threshold_value)
@@ -276,7 +276,7 @@ def apply_threshold(loss_map, loader, args):
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             
-            mask, thr = threshold_heatmap(hm_up, method='otsu')
+            mask, thr = threshold_heatmap(hm_up, method='percentile')
             stem = Path(p).stem
             defect = Path(p).parent.name
             cv2.imwrite(os.path.join(out_dir, f"{defect}_{stem}_orig.png"), img)
