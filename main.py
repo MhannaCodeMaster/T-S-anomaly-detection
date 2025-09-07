@@ -140,7 +140,7 @@ def crop_images(loss_map, loader, args):
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             
-            mask, thr = threshold_heatmap(hm_up, method='percentile', percentile=99.0)
+            mask, thr = threshold_heatmap(hm_up, method=args.threshold_method, percentile=args.threshold_value)
             boxes = components_to_bboxes(mask, min_area=20, ignore_border=True)
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 255, 0), thickness=2)
             os.makedirs(crops_dir, exist_ok=True)
