@@ -1,4 +1,5 @@
 import argparse
+from copy import copy
 import os
 import cv2
 import numpy as np
@@ -47,6 +48,10 @@ def main():
         val_dataset = MVTecDataset(val_image_list, transform=transform)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
         print("Validation dataset loaded")
+        test_image_list = glob(os.path.join(args.mvtec_ad, args.category, 'test', '*', '*.png'))
+        test_dataset = MVTecDataset(test_image_list, transform=transform)
+        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
+        print("Test dataset loaded")
     elif args.mode == 'test':
         test_neg_image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'test', 'good', '*.png')))
         test_pos_image_list = set(glob(os.path.join(args.mvtec_ad, args.category, 'test', '*', '*.png'))) - set(test_neg_image_list)
@@ -62,7 +67,9 @@ def main():
     student.cuda()
 
     if args.mode == 'train':
-        train_val(teacher, student, train_loader, val_loader, args)
+        best_student = train_val_student(teacher, student, train_loader, val_loader, args)
+        test_err_map = get_error_map(teacher, best_student, test_loader)
+        apply_threshold(test_err_map, test_loader)
     elif args.mode == 'test':
         saved_dict = torch.load(args.checkpoint)
         category = args.category
@@ -71,8 +78,8 @@ def main():
         print('load ' + args.checkpoint)
         student.load_state_dict(saved_dict['state_dict'])
 
-        pos = test(teacher, student, test_pos_loader)
-        neg = test(teacher, student, test_neg_loader)
+        pos = get_error_map(teacher, student, test_pos_loader)
+        neg = get_error_map(teacher, student, test_neg_loader)
 
         scores = []
         for i in range(len(pos)):
@@ -94,7 +101,7 @@ def main():
      
 
 
-def test(teacher, student, loader):
+def get_error_map(teacher, student, loader):
     """Testing function to compute anomaly score maps."""
     print("Testing started...")
     teacher.eval()
@@ -135,13 +142,14 @@ def test(teacher, student, loader):
     print("Testing completed.")    
     # Returns an (N, 64, 64) array of anomaly score maps, where N is the number of images (Higher = more anomalous).
     return loss_map
-    
 
-def train_val(teacher, student, train_loader, val_loader, args):
-    print("Training started...")
+def train_val_student(teacher, student, train_loader, val_loader, args):
+    print("Student training started...")
     min_err = 10000 # Stores the best validation error so far.
     teacher.eval()  # Teacher model is forzen
     student.train() # Student model is set to training mode
+    
+    best_student = None
     
     # Using SGD optimizer for training the student model
     optimizer = torch.optim.SGD(student.parameters(), 0.4, momentum=0.9, weight_decay=1e-4)
@@ -181,10 +189,7 @@ def train_val(teacher, student, train_loader, val_loader, args):
         print(f'Epoch [{epoch+1}/{args.epochs}] - Average Training Loss: {avg_train_loss:.6f}')
 
         # Runs the test() function on the validation set.
-        err = test(teacher, student, val_loader)
-        
-        if epoch%20 == 0:
-            apply_threshold(err, val_loader, epoch)
+        err = get_error_map(teacher, student, val_loader)
         
         err_mean = err.mean()
         print('Valid Loss: {:.7f}'.format(err_mean.item()))
@@ -199,7 +204,9 @@ def train_val(teacher, student, train_loader, val_loader, args):
                 'state_dict': student.state_dict()
             }
             torch.save(state_dict, save_name)
-    print("Training completed.")
+            best_student = copy.deepcopy(student)
+    print("Student training completed.")
+    return best_student
     
 def normalize_01(x: np.ndarray):
     x = x.astype(np.float32)
@@ -214,12 +221,12 @@ def upscale_heatmap_to_image(hm64: np.ndarray, target_hw):
     hm_up = normalize_01(hm_up)
     return hm_up
 
-def apply_threshold(loss_map, val_loader, epoch):
-    out_dir = f"outputs/{epoch:02d}"
+def apply_threshold(loss_map, loader):
+    out_dir = f"outputs/heatmaps/{loader.dataset.category}"
     os.makedirs(out_dir, exist_ok=True)
     
     idx = 0
-    for batch in val_loader:
+    for batch in loader:
         img_paths, _ = batch
         
         bs = len(img_paths)
@@ -236,12 +243,10 @@ def apply_threshold(loss_map, val_loader, epoch):
             H, W = img.shape[:2]
             hm_up = upscale_heatmap_to_image(hm64, (H, W))
             hm_gray = (hm_up * 255.0).astype(np.uint8)
-            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_hm.png"), hm_gray)
-            
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_overlay.png"), overlay)
-    
+
 
 if __name__ == "__main__":
     main()
