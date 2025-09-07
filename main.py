@@ -230,6 +230,23 @@ def upscale_heatmap_to_image(hm64: np.ndarray, target_hw):
     hm_up = normalize_01(hm_up)
     return hm_up
 
+def threshold_heatmap(hm_up, method="otsu", percentile=99.5):
+    """
+    hm_up: (H,W) float in [0,1]
+    Returns: (mask_uint8, threshold_value)
+    """
+    if method == "otsu":
+        hm8 = (hm_up * 255).astype(np.uint8)
+        thr_val, mask = cv2.threshold(hm8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        thr = thr_val / 255.0
+    elif method == "percentile":
+        thr = np.percentile(hm_up, percentile)
+        mask = (hm_up >= thr).astype(np.uint8) * 255
+    else:  # fixed threshold
+        thr = float(method)
+        mask = (hm_up >= thr).astype(np.uint8) * 255
+    return mask, thr
+
 def apply_threshold(loss_map, loader, args):
     print("Starting to apply threshold and save heatmaps...")
     out_dir = f"outputs/heatmaps/{args.category}"
@@ -258,10 +275,15 @@ def apply_threshold(loss_map, loader, args):
             hm_gray = (hm_up * 255.0).astype(np.uint8)
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
+            
+            mask, thr = threshold_heatmap(hm_up, method='otsu')
             stem = Path(p).stem
-            cv2.imwrite(os.path.join(out_dir, f"{stem}_overlay.png"), overlay)
-            cv2.imwrite(os.path.join(out_dir, f"{stem}_orig.png"), img)
-    print("Finished saving heatmaps.")
+            defect = Path(p).parent.name
+            cv2.imwrite(os.path.join(out_dir, f"{defect}_{stem}_orig.png"), img)
+            cv2.imwrite(os.path.join(out_dir, f"{defect}_{stem}_overlay.png"), overlay)
+            cv2.imwrite(os.path.join(out_dir, f"{defect}_{stem}_mask.png"), mask)
+            
+    print("Finished saving heatmaps + masks.")
 
 if __name__ == "__main__":
     main()
