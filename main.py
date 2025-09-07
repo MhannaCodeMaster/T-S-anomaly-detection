@@ -67,9 +67,16 @@ def main():
     student.cuda()
 
     if args.mode == 'train':
-        best_student = train_val_student(teacher, student, train_loader, val_loader, args)
+        if args.checkpoint:
+            print('loading model ' + args.checkpoint)
+            saved_dict = torch.load(args.checkpoint)
+            student.load_state_dict(saved_dict['state_dict'])
+            best_student = copy.deepcopy(student)
+        else:   
+            best_student = train_val_student(teacher, student, train_loader, val_loader, args)
+            
         test_err_map = get_error_map(teacher, best_student, test_loader)
-        apply_threshold(test_err_map, test_loader)
+        apply_threshold(test_err_map, test_loader, args)
     elif args.mode == 'test':
         saved_dict = torch.load(args.checkpoint)
         category = args.category
@@ -221,8 +228,8 @@ def upscale_heatmap_to_image(hm64: np.ndarray, target_hw):
     hm_up = normalize_01(hm_up)
     return hm_up
 
-def apply_threshold(loss_map, loader):
-    out_dir = f"outputs/heatmaps/{loader.dataset.category}"
+def apply_threshold(loss_map, loader, args):
+    out_dir = f"outputs/heatmaps/{args.category}"
     os.makedirs(out_dir, exist_ok=True)
     
     idx = 0
