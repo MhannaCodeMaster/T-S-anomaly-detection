@@ -50,7 +50,7 @@ def main():
         print("Validation dataset loaded")
         test_image_list = glob(os.path.join(args.mvtec_ad, args.category, 'test', '*', '*.png'))
         test_dataset = MVTecDataset(test_image_list, transform=transform)
-        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
+        test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
         print("Test dataset loaded")
     elif args.mode == 'test':
         test_neg_image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'test', 'good', '*.png')))
@@ -252,7 +252,9 @@ def apply_threshold(loss_map, loader, args):
             hm_gray = (hm_up * 255.0).astype(np.uint8)
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
-            cv2.imwrite(os.path.join(out_dir, f"{Path(p).stem}_overlay.png"), overlay)
+            stem = Path(p).stem
+            cv2.imwrite(os.path.join(out_dir, f"{stem}_overlay.png"), overlay)
+            cv2.imwrite(os.path.join(out_dir, f"{stem}_orig.png"), img)
 
 
 if __name__ == "__main__":
