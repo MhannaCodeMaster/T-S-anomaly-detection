@@ -110,7 +110,7 @@ def main():
 
 def get_error_map(teacher, student, loader):
     """Testing function to compute anomaly score maps."""
-    print("Testing started...")
+    print("Computing anomaly score maps...")
     teacher.eval()
     student.eval()
     # Pre-allocate array to store the anomaly score map per image (64x64 resolution)
@@ -146,7 +146,7 @@ def get_error_map(teacher, student, loader):
         # Advances the index by the batch size.
         i += batch_img.size(0)
     
-    print("Testing completed.")    
+    print("anomaly score maps computed.")    
     # Returns an (N, 64, 64) array of anomaly score maps, where N is the number of images (Higher = more anomalous).
     return loss_map
 
@@ -229,6 +229,7 @@ def upscale_heatmap_to_image(hm64: np.ndarray, target_hw):
     return hm_up
 
 def apply_threshold(loss_map, loader, args):
+    print("Starting to apply threshold and save heatmaps...")
     out_dir = f"outputs/heatmaps/{args.category}"
     os.makedirs(out_dir, exist_ok=True)
     
@@ -255,7 +256,7 @@ def apply_threshold(loss_map, loader, args):
             stem = Path(p).stem
             cv2.imwrite(os.path.join(out_dir, f"{stem}_overlay.png"), overlay)
             cv2.imwrite(os.path.join(out_dir, f"{stem}_orig.png"), img)
-
+    print("Finished saving heatmaps.")
 
 if __name__ == "__main__":
     main()
