@@ -215,7 +215,7 @@ def upscale_heatmap_to_image(hm64: np.ndarray, target_hw):
 
 def apply_threshold(loss_map, val_loader):
     out_dir = "outputs/step1_upscaled"
-    # os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
     
     idx = 0
     for batch in val_loader:
