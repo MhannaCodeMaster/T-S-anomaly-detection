@@ -169,6 +169,9 @@ def draw_boxes(img_bgr: np.ndarray, boxes, color=(0,255,0), thickness=2):
     return vis
 
 def pad_box(x, y, w, h, H, W, pad_ratio=0.05):
+    """
+    Adds padding to a bounding box, so the crop extends slightly beyond the original defect region.
+    """
     px, py = int(w * pad_ratio), int(h * pad_ratio)
     x0, y0 = max(0, x - px), max(0, y - py)
     x1, y1 = min(W, x + w + px), min(H, y + h + py)
