@@ -143,7 +143,7 @@ def threshold_heatmap(hm_up, method="percentile", percentile=99.5):
         mask = (hm_up >= thr).astype(np.uint8) * 255
     return mask, thr
 
-def components_to_bboxes(mask: np.ndarray, min_area: int = 20, ignore_border: bool = True):
+def components_to_bboxes(mask: np.ndarray, min_area, ignore_border: bool = True):
     """
     mask: uint8 {0,255}, shape (H,W)
     Returns list of boxes: [(x,y,w,h), ...]
@@ -155,10 +155,6 @@ def components_to_bboxes(mask: np.ndarray, min_area: int = 20, ignore_border: bo
         x, y, w, h, area = stats[lbl]
         if area < min_area:
             continue
-        if ignore_border:
-            touches_border = (x == 0) or (y == 0) or (x + w >= W) or (y + h >= H)
-            if touches_border:
-                continue
         boxes.append((int(x), int(y), int(w), int(h)))
     return boxes
 
