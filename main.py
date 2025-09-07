@@ -183,7 +183,8 @@ def train_val(teacher, student, train_loader, val_loader, args):
         # Runs the test() function on the validation set.
         err = test(teacher, student, val_loader)
         
-        apply_threshold(err, val_loader)
+        if epoch%20 == 0:
+            apply_threshold(err, val_loader)
         
         err_mean = err.mean()
         print('Valid Loss: {:.7f}'.format(err_mean.item()))
@@ -213,8 +214,8 @@ def upscale_heatmap_to_image(hm64: np.ndarray, target_hw):
     hm_up = normalize_01(hm_up)
     return hm_up
 
-def apply_threshold(loss_map, val_loader):
-    out_dir = "outputs/step1_upscaled"
+def apply_threshold(loss_map, val_loader, epoch):
+    out_dir = f"outputs/{epoch:02d}"
     os.makedirs(out_dir, exist_ok=True)
     
     idx = 0
