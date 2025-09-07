@@ -36,6 +36,8 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
+    print_config_used(args)
+
     if args.mode == 'train':
         print("Training on category: ", args.category)
         #print("Dataset path: " ,glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
@@ -157,6 +159,12 @@ def crop_images(loss_map, loader, args):
             cv2.imwrite(os.path.join(img_dir, f"{defect}_{stem}_boxes.png"), boxes_vis)
                    
     print("Cropping and saving images completed.")
+
+def print_config_used(args):
+    print("Configuration used:")
+    for arg in vars(args):
+        print(f"{arg}: {getattr(args, arg)}")
+    print("\n")
 
 if __name__ == "__main__":
     main()

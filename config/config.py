@@ -39,6 +39,10 @@ def load_args():
     parser.add_argument("--category", type=str , default=None, help="category name for MvTec AD dataset")
     parser.add_argument("--epochs", type=int, default=None, help='number of epochs')
 
+    # Thresholding method and value
+    parser.add_argument("--threshold-method", type=str, default="percentile", required=False, help="thresholding method: otsu, percentile")
+    parser.add_argument("--threshold-value", type=str, default="99.5", required=False, help="thresholding method: otsu, percentile")
+    
     parser.add_argument("--checkpoint-epoch", type=int, default=None, help="checkpoint resumed for testing (1-based)")
     parser.add_argument("--batch-size", type=int, default=None, help='batch size')
     # trivial parameters
