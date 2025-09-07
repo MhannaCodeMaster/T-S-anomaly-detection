@@ -39,6 +39,7 @@ def main():
     ])
 
     if args.mode == 'train':
+        print("Training on category: ", args.category)
         #print("Dataset path: " ,glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
         image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
         train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
@@ -53,6 +54,7 @@ def main():
         test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
         print("Test dataset loaded")
     elif args.mode == 'test':
+        print("Testing on category: ", args.category)
         test_neg_image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'test', 'good', '*.png')))
         test_pos_image_list = set(glob(os.path.join(args.mvtec_ad, args.category, 'test', '*', '*.png'))) - set(test_neg_image_list)
         test_pos_image_list = sorted(list(test_pos_image_list))
@@ -232,6 +234,9 @@ def apply_threshold(loss_map, loader, args):
     print("Starting to apply threshold and save heatmaps...")
     out_dir = f"outputs/heatmaps/{args.category}"
     os.makedirs(out_dir, exist_ok=True)
+    
+    print("[dbg] len(loader.dataset) =", len(loader.dataset))
+    print("[dbg] loss_map.shape      =", getattr(loss_map, "shape", None))
     
     idx = 0
     for batch in loader:
