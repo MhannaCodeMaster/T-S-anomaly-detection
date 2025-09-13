@@ -172,3 +172,89 @@ def pad_box(x, y, w, h, H, W, pad_ratio=0.05):
     x0, y0 = max(0, x - px), max(0, y - py)
     x1, y1 = min(W, x + w + px), min(H, y + h + py)
     return x0, y0, x1, y1
+
+def merge_boxes_touching_or_near(boxes, gap=4, iou_thresh=0.0):
+    """
+    Merge boxes that touch or are within 'gap' pixels (via gap-expansion overlap).
+    Optionally also merge if IoU exceeds iou_thresh.
+    boxes: list[(x,y,w,h), ...]
+    """
+    if not boxes:
+        return []
+
+    # Convert to x1,y1,x2,y2
+    B = np.array([[x, y, x+w, y+h] for (x, y, w, h) in boxes], dtype=np.int32)
+
+    merged = True
+    while merged:
+        merged = False
+        keep = []
+        used = np.zeros(len(B), dtype=bool)
+        for i in range(len(B)):
+            if used[i]:
+                continue
+            xi1, yi1, xi2, yi2 = B[i]
+            for j in range(i+1, len(B)):
+                if used[j]:
+                    continue
+                xj1, yj1, xj2, yj2 = B[j]
+                near = boxes_touch_or_near([xi1, yi1, xi2, yi2], [xj1, yj1, xj2, yj2], gap)
+                ok_iou = (iou_thresh > 0.0) and (iou([xi1, yi1, xi2, yi2], [xj1, yj1, xj2, yj2]) >= iou_thresh)
+                if near or ok_iou:
+                    # union
+                    xi1, yi1 = min(xi1, xj1), min(yi1, yj1)
+                    xi2, yi2 = max(xi2, xj2), max(yi2, yj2)
+                    used[j] = True
+                    merged = True
+            used[i] = True
+            keep.append([xi1, yi1, xi2, yi2])
+        B = np.array(keep, dtype=np.int32)
+
+    # Back to x,y,w,h
+    out = [(int(x1), int(y1), int(x2-x1), int(y2-y1)) for (x1, y1, x2, y2) in B.tolist()]
+    return out
+
+def boxes_touch_or_near(a, b, gap=0):
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        # Expand by 'gap' and test intersection
+        ax1g, ay1g, ax2g, ay2g = ax1-gap, ay1-gap, ax2+gap, ay2+gap
+        bx1g, by1g, bx2g, by2g = bx1-gap, by1-gap, bx2+gap, by2+gap
+        ix1, iy1 = max(ax1g, bx1g), max(ay1g, by1g)
+        ix2, iy2 = min(ax2g, bx2g), min(ay2g, by2g)
+        return (ix2 > ix1) and (iy2 > iy1)
+
+def iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2-ix1), max(0, iy2-iy1)
+    inter = iw * ih
+    ua = (ax2-ax1)*(ay2-ay1) + (bx2-bx1)*(by2-by1) - inter + 1e-9
+    return inter / ua
+
+def expand_boxes(boxes, H, W, expand_ratio=0.12):
+    """Expand each (x,y,w,h) by a ratio; clip to image size."""
+    if expand_ratio <= 0 or not boxes:
+        return boxes
+    out = []
+    for (x, y, w, h) in boxes:
+        cx, cy = x + w/2.0, y + h/2.0
+        w2 = int(round(w * (1 + expand_ratio)))
+        h2 = int(round(h * (1 + expand_ratio)))
+        x2 = int(round(cx - w2 / 2.0))
+        y2 = int(round(cy - h2 / 2.0))
+        x2 = max(0, x2); y2 = max(0, y2)
+        w2 = min(W - x2, w2); h2 = min(H - y2, h2)
+        out.append((x2, y2, w2, h2))
+    return out
+
+
+def keep_largest_box(boxes):
+    """Keep a single largest-area box (optional alternative policy)."""
+    if not boxes:
+        return boxes
+    areas = [w*h for (x,y,w,h) in boxes]
+    i = int(np.argmax(areas))
+    return [boxes[i]]

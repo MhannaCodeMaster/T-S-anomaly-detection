@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from torchvision.transforms.functional import InterpolationMode
 
 from evaluate import evaluate
 from sklearn.model_selection import train_test_split
@@ -79,6 +80,7 @@ def main():
             
         test_err_map = get_error_map(teacher, best_student, test_loader)
         crop_images(test_err_map, test_loader, args)
+        # triplet_learning(args)
     elif args.mode == 'test':
         saved_dict = torch.load(args.checkpoint)
         category = args.category
@@ -110,7 +112,7 @@ def main():
      
 
 def crop_images(loss_map, loader, args):
-    print("Starting to apply threshold + cropping + saving images...")
+    print("Starting cropping images...")
     img_dir = f"outputs/{args.category}/images"
     crops_dir = f"outputs/{args.category}/crops"
     os.makedirs(img_dir, exist_ok=True)
@@ -141,7 +143,18 @@ def crop_images(loss_map, loader, args):
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             
             mask, thr = threshold_heatmap(hm_up, method=args.threshold_method, percentile=float(args.threshold_value))
-            boxes = components_to_bboxes(mask, min_area=50, ignore_border=True)
+            # clean mask
+            K_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))    # remove salt-noise
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, K_open)
+
+            K_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))     # fuse close fragments
+            mask = cv2.dilate(mask, K_dil, iterations=1)
+
+            boxes = components_to_bboxes(mask, min_area=120, ignore_border=True)
+            # --- merge touching/near boxes, then (optionally) expand ---
+            boxes = merge_boxes_touching_or_near(boxes, gap=4, iou_thresh=0.0)
+            boxes = expand_boxes(boxes, H, W, expand_ratio=0.12)  # 12% padding; set 0.0 to disable
+            
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 255, 0), thickness=2)
             os.makedirs(crops_dir, exist_ok=True)
 
@@ -158,7 +171,40 @@ def crop_images(loss_map, loader, args):
             cv2.imwrite(os.path.join(img_dir, f"{defect}_{stem}_mask.png"), mask)
             cv2.imwrite(os.path.join(img_dir, f"{defect}_{stem}_boxes.png"), boxes_vis)
                    
-    print("Cropping and saving images completed.")
+    print("Cropping images completed.")
+
+def triplet_learning(args):
+    print("Starting triplet learning...")
+    triplet_model = ResNet18_MS3(pretrained=False)
+    
+    train_tf = transforms.Compose([
+        transforms.Resize(256),  # keep aspect ratio
+        transforms.RandomRotation(12, interpolation=InterpolationMode.BILINEAR, fill=0),
+        transforms.CenterCrop(224),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    ])
+    
+    val_tf = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    ])
+    
+    train_image_list = glob(os.path.join("outputs/Defect labeling.v1i.folder", 'train', '*', '*.jpg'))
+    train_dataset = MVTecDataset(train_image_list, transform=train_tf)
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True, drop_last=False)
+    print("Triplet learning training dataset loaded")
+    
+    val_image_list = glob(os.path.join("outputs/Defect labeling.v1i.folder", 'valid', '*', '*.jpg'))
+    val_dataset = MVTecDataset(train_image_list, transform=val_tf)
+    val_loader = DataLoader(train_dataset, batch_size=32, shuffle=False, drop_last=False)
+    print("Triplet learning validation dataset loaded")
+    
+    
+    print("Triplet learning completed.")
 
 def print_config_used(args):
     print("Configuration used:")
