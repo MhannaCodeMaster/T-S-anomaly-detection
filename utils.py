@@ -250,7 +250,6 @@ def expand_boxes(boxes, H, W, expand_ratio=0.12):
         out.append((x2, y2, w2, h2))
     return out
 
-
 def keep_largest_box(boxes):
     """Keep a single largest-area box (optional alternative policy)."""
     if not boxes:

@@ -150,9 +150,9 @@ def crop_images(loss_map, loader, args):
             K_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))     # fuse close fragments
             mask = cv2.dilate(mask, K_dil, iterations=1)
 
-            boxes = components_to_bboxes(mask, min_area=120, ignore_border=True)
+            boxes = components_to_bboxes(mask, min_area=300, ignore_border=True)
             # --- merge touching/near boxes, then (optionally) expand ---
-            boxes = merge_boxes_touching_or_near(boxes, gap=4, iou_thresh=0.0)
+            boxes = merge_boxes_touching_or_near(boxes, gap=0, iou_thresh=0.5) 
             boxes = expand_boxes(boxes, H, W, expand_ratio=0.12)  # 12% padding; set 0.0 to disable
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 255, 0), thickness=2)
