@@ -190,6 +190,7 @@ def triplet_learning(cfg):
     print("Triplet learning completed.")
 
 def load_train_datasets(transform, cfg):
+    print("Loading datasets...")
     image_list = sorted(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'train', 'good', '*.png')))
     train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
     train_dataset = MVTecDataset(train_image_list, transform=transform)
@@ -202,6 +203,7 @@ def load_train_datasets(transform, cfg):
     test_dataset = MVTecDataset(test_image_list, transform=transform)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
     print("Test dataset loaded")
+    print("Datasets loading completed.")
     return train_loader, val_loader, test_loader
 
 
