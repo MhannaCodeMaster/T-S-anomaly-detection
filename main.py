@@ -126,11 +126,13 @@ def crop_images(loss_map, loader, mean, std, cfg):
             
             H, W = img.shape[:2]
             hm_up = upscale_heatmap_to_image(hm64, (H, W))
-            hm_gray = (hm_up * 255.0).astype(np.uint8)
+            hm_z = zscore_calibrate(hm_up, mean, std)
+            
+            hm_gray = (hm_z * 255.0).astype(np.uint8)
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             
-            mask, thr = threshold_heatmap(hm_up, method=cfg.heatmap_threshold.method, percentile=float(cfg.heatmap_threshold.value))
+            mask, thr = threshold_heatmap(hm_z, method=cfg.heatmap_threshold.method, percentile=float(cfg.heatmap_threshold.value))
             # clean mask
             K_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))    # remove salt-noise
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, K_open)
