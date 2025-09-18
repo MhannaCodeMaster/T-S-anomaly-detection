@@ -5,6 +5,9 @@ import copy
 import os
 import cv2
 import numpy as np
+from pathlib import Path
+from hydra.core.hydra_config import HydraConfig
+
 
 def get_error_map(teacher, student, loader):
     """Testing function to compute anomaly score maps."""
@@ -48,7 +51,7 @@ def get_error_map(teacher, student, loader):
     # Returns an (N, 64, 64) array of anomaly score maps, where N is the number of images (Higher = more anomalous).
     return loss_map
 
-def train_val_student(teacher, student, train_loader, val_loader, args):
+def train_val_student(teacher, student, train_loader, val_loader, cfg):
     print("Student training started...")
     min_err = 10000 # Stores the best validation error so far.
     teacher.eval()  # Teacher model is forzen
@@ -59,7 +62,7 @@ def train_val_student(teacher, student, train_loader, val_loader, args):
     # Using SGD optimizer for training the student model
     optimizer = torch.optim.SGD(student.parameters(), 0.4, momentum=0.9, weight_decay=1e-4)
     # Main training loop
-    for epoch in range(args.epochs):
+    for epoch in range(cfg.student_training.epochs):
         student.train()
         running_loss = 0.0
         num_batches = 0
@@ -83,7 +86,7 @@ def train_val_student(teacher, student, train_loader, val_loader, args):
                 # The loss = average squared distance between the teacher and student features, summed over feature levels.
                 loss += torch.sum((t_feat[i] - s_feat[i]) ** 2, 1).mean()
 
-            print('[%d/%d] loss: %f' % (epoch, args.epochs, loss.item()))
+            print('[%d/%d] loss: %f' % (epoch, cfg.student_training.epochs, loss.item()))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -91,7 +94,7 @@ def train_val_student(teacher, student, train_loader, val_loader, args):
             num_batches += 1
         
         avg_train_loss = running_loss / num_batches
-        print(f'Epoch [{epoch+1}/{args.epochs}] - Average Training Loss: {avg_train_loss:.6f}')
+        print(f'Epoch [{epoch+1}/{cfg.student_training.epochs}] - Average Training Loss: {avg_train_loss:.6f}')
 
         # Runs the test() function on the validation set.
         err = get_error_map(teacher, student, val_loader)
@@ -100,12 +103,13 @@ def train_val_student(teacher, student, train_loader, val_loader, args):
         print('Valid Loss: {:.7f}'.format(err_mean.item()))
         if err_mean < min_err:
             min_err = err_mean
-            save_name = os.path.join(args.model_save_path, args.category, 'best.pth.tar')
+            run_dir = Path(HydraConfig.get().runtime.output_dir)
+            save_name = os.path.join(run_dir, cfg.models.student_dir, 'student_best.pth.tar')
             dir_name = os.path.dirname(save_name)
             if dir_name and not os.path.exists(dir_name):
                 os.makedirs(dir_name)
             state_dict = {
-                'category': args.category,
+                'category': cfg.dataset.category,
                 'state_dict': student.state_dict()
             }
             torch.save(state_dict, save_name)
@@ -257,3 +261,71 @@ def keep_largest_box(boxes):
     areas = [w*h for (x,y,w,h) in boxes]
     i = int(np.argmax(areas))
     return [boxes[i]]
+
+def load_calibration(npz_path):
+    """
+    Loads calibration stats from npz file.
+    """
+    data = np.load(npz_path)
+    return float(data["mean"]), float(data["std"])
+
+def zscore_calibrate(hm_up, mean, std, eps=1e-6):
+    return (hm_up - mean) / max(std, eps)
+
+def cosine_border_taper(H, W, margin=6):
+    """2D cosine ramp that downweights borders by ~0 at edges and ~1 in center."""
+    if margin <= 0:
+        return np.ones((H, W), dtype=np.float32)
+    y = np.ones(H, np.float32); x = np.ones(W, np.float32)
+
+    wy = ramp(H, margin)
+    wx = ramp(W, margin)
+    return np.outer(wy, wx)    # (H,W)
+
+def ramp(n, m):
+        v = np.ones(n, np.float32)
+        if m > 0:
+            t = np.linspace(0, np.pi, m, dtype=np.float32)
+            v[:m]  = (1 - np.cos(t)) * 0.5
+            v[-m:] = v[:m][::-1]
+            v[m:-m] = 1.0
+        return v
+
+@torch.no_grad()
+def compute_train_calibration_stats(teacher, student, train_loader, cfg, device="cuda"):
+    """
+    Compute scalar μ, σ over all pixels of anomaly maps on normal training images.
+    Saves to npz: {mean: float, std: float}.
+    Returns mean and std
+    """
+    print("Computing training set calibration stats...")
+    teacher.eval(); student.eval()
+    sums, sums2, count = 0.0, 0.0, 0
+
+    for _, batch_img in train_loader:
+        batch_img = batch_img.to(device, non_blocking=True)
+        t_feat = teacher(batch_img)
+        s_feat = student(batch_img)
+
+        # feature mismatch -> (N,1,h,w) per level -> upsample to a common 64x64 -> sum across levels
+        score = 0
+        for t, s in zip(t_feat, s_feat):
+            # per-pixel channel MSE
+            diff = (t - s).pow(2).mean(dim=1, keepdim=True)   # (N,1,h,w)
+            diff64 = F.interpolate(diff, size=(64, 64), mode="bilinear", align_corners=False)
+            score += diff64                                   # (N,1,64,64)
+
+        score_np = score.squeeze(1).float().cpu().numpy()     # (N,64,64)
+        sums  += score_np.sum()
+        sums2 += (score_np ** 2).sum()
+        count += score_np.size
+
+    mean = sums / max(1, count)
+    var  = (sums2 / max(1, count)) - (mean * mean)
+    std  = float(np.sqrt(max(var, 1e-12)))
+
+    run_dir = Path(HydraConfig.get().runtime.output_dir)
+    file_path = os.path.join(run_dir,cfg.calibration_path)
+    np.savez(file_path, mean=float(mean), std=float(std))
+    print(f"[calib] saved μ={mean:.6g}, σ={std:.6g}")
+    return mean, std

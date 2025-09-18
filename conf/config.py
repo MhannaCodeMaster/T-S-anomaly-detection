@@ -34,6 +34,7 @@ def load_args():
     parser = argparse.ArgumentParser(description="Anomaly Detection")
     parser.add_argument("--config", type=str, required=False,  default="/config/train.yaml",help="path to the yaml config file")
     parser.add_argument("--mode", type=str, default="train", help="train or test")
+    parser.add_argument("--output_path", type=str, default="outputs", help="path to save outputs like crops, calibration stats, images, and etc.")
     # required training super-parameters
     parser.add_argument("--checkpoint", type=str, default=None, help="student checkpoint")
     parser.add_argument("--category", type=str , default=None, help="category name for MvTec AD dataset")

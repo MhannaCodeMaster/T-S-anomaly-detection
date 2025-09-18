@@ -1,0 +1,45 @@
+mode: train            # train, test
+run_id: null          # auto if null
+
+paths:
+  outputs_root: outputs
+  images: images
+  crops: crops
+
+
+# models checkpoints paths
+models:
+  root: models
+  student_dir: ${models.root}/student
+  triplet_dir: ${models.root}/triplet
+  load_student: null # Full path to the model to load. if null, a new model is created.
+
+# dataset path
+dataset:
+  name: mvtec
+  root: /data/MVTecAD
+  category: cable       # MVTec category
+
+# train-time calibration artifacts (shared across runs)
+calibration_path: calibration/train_calib.npz
+
+heatmap_threshold:
+  method: percentile
+  value: 95.0
+
+student_training:
+  epochs: 100
+  batch_size: 32
+
+triplet_training:
+  epochs: 100
+  batch_size: 32
+
+# Hydra-managed run directories:
+# -> outputs/<category>/<mode>/<timestamp>_<category>/
+hydra:
+  run:
+    dir: ${paths.outputs_root}/${dataset.category}/${mode}/${now:%Y-%m-%d_%H-%M-%S}_${dataset.category}
+  sweep:
+    dir: ${paths.outputs_root}/${dataset.category}/${mode}/multirun/${now:%Y-%m-%d_%H-%M-%S}_${dataset.category}
+    subdir: ${hydra.job.num}

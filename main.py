@@ -1,13 +1,15 @@
 import copy
 import os
 import cv2
-import numpy as np
 from pathlib import Path
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.transforms.functional import InterpolationMode
+import numpy as np
 
 from evaluate import evaluate
 from sklearn.model_selection import train_test_split
@@ -17,16 +19,17 @@ from models.teacher import ResNet18_MS3
 from data.mvtec_dataset import MVTecDataset
 from data.data_utils import load_ground_truth
 
-from config.config import load_args, load_config
+# from conf import load_args, load_config
 from utils import *
 
-def main():
-    args = load_args()
-    config = load_config(args.config)
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def main(cfg: DictConfig):
+    # args = load_args()
+    # config = load_config(args.config)
     
-    for key, value in config.items():
-        if getattr(args, key) is None:
-            setattr(args, key, value)
+    # for key, value in config.items():
+    #     if getattr(args, key) is None:
+    #         setattr(args, key, value)
     
     np.random.seed(0)
     torch.manual_seed(0)
@@ -37,27 +40,13 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    print_config_used(args)
-
-    if args.mode == 'train':
-        print("Training on category: ", args.category)
-        #print("Dataset path: " ,glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
-        image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'train', 'good', '*.png')))
-        train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
-        train_dataset = MVTecDataset(train_image_list, transform=transform)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=False)
-        print("Training dataset loaded")
-        val_dataset = MVTecDataset(val_image_list, transform=transform)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-        print("Validation dataset loaded")
-        test_image_list = glob(os.path.join(args.mvtec_ad, args.category, 'test', '*', '*.png'))
-        test_dataset = MVTecDataset(test_image_list, transform=transform)
-        test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
-        print("Test dataset loaded")
-    elif args.mode == 'test':
-        print("Testing on category: ", args.category)
-        test_neg_image_list = sorted(glob(os.path.join(args.mvtec_ad, args.category, 'test', 'good', '*.png')))
-        test_pos_image_list = set(glob(os.path.join(args.mvtec_ad, args.category, 'test', '*', '*.png'))) - set(test_neg_image_list)
+    if cfg.mode == 'train':
+        print("Training on category: ", cfg.dataset.category)
+        train_loader, val_loader, test_loader = load_train_datasets(cfg, transform)
+    elif cfg.mode == 'test':
+        print("Testing on category: ", cfg.category)
+        test_neg_image_list = sorted(glob(os.path.join(cfg.dataset.mvtec_ad.root, cfg.dataset.category, 'test', 'good', '*.png')))
+        test_pos_image_list = set(glob(os.path.join(cfg.dataset.mvtec_ad.root, cfg.dataset.category, 'test', '*', '*.png'))) - set(test_neg_image_list)
         test_pos_image_list = sorted(list(test_pos_image_list))
         test_neg_dataset = MVTecDataset(test_neg_image_list, transform=transform)
         test_pos_dataset = MVTecDataset(test_pos_image_list, transform=transform)
@@ -69,54 +58,53 @@ def main():
     teacher.cuda()
     student.cuda()
 
-    if args.mode == 'train':
-        if args.checkpoint:
-            print('loading model ' + args.checkpoint)
-            saved_dict = torch.load(args.checkpoint)
+    if cfg.mode == 'train':        
+        if cfg.models.load_student:
+            print('loading model ' + cfg.models.load_student)
+            saved_dict = torch.load(cfg.models.load_student)
             student.load_state_dict(saved_dict['state_dict'])
             best_student = copy.deepcopy(student)
         else:   
-            best_student = train_val_student(teacher, student, train_loader, val_loader, args)
+            best_student = train_val_student(teacher, student, train_loader, val_loader, cfg)
             
         test_err_map = get_error_map(teacher, best_student, test_loader)
-        crop_images(test_err_map, test_loader, args)
+        mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, device="cuda")
+        crop_images(test_err_map, test_loader, mean, std, cfg)
         # triplet_learning(args)
-    elif args.mode == 'test':
-        saved_dict = torch.load(args.checkpoint)
-        category = args.category
-        gt = load_ground_truth(args.mvtec_ad, category)
+    # elif args.mode == 'test':
+    #     saved_dict = torch.load(args.checkpoint)
+    #     category = args.category
+    #     gt = load_ground_truth(args.mvtec_ad, category)
 
-        print('load ' + args.checkpoint)
-        student.load_state_dict(saved_dict['state_dict'])
+    #     print('load ' + args.checkpoint)
+    #     student.load_state_dict(saved_dict['state_dict'])
 
-        pos = get_error_map(teacher, student, test_pos_loader)
-        neg = get_error_map(teacher, student, test_neg_loader)
+    #     pos = get_error_map(teacher, student, test_pos_loader)
+    #     neg = get_error_map(teacher, student, test_neg_loader)
 
-        scores = []
-        for i in range(len(pos)):
-            temp = cv2.resize(pos[i], (256, 256))
-            scores.append(temp)
-        for i in range(len(neg)):
-            temp = cv2.resize(neg[i], (256, 256))
-            scores.append(temp)
+    #     scores = []
+    #     for i in range(len(pos)):
+    #         temp = cv2.resize(pos[i], (256, 256))
+    #         scores.append(temp)
+    #     for i in range(len(neg)):
+    #         temp = cv2.resize(neg[i], (256, 256))
+    #         scores.append(temp)
 
-        scores = np.stack(scores)
-        neg_gt = np.zeros((len(neg), 256, 256), dtype=np.bool)
-        gt_pixel = np.concatenate((gt, neg_gt), 0)
-        gt_image = np.concatenate((np.ones(pos.shape[0], dtype=np.bool), np.zeros(neg.shape[0], dtype=np.bool)), 0)        
+    #     scores = np.stack(scores)
+    #     neg_gt = np.zeros((len(neg), 256, 256), dtype=np.bool)
+    #     gt_pixel = np.concatenate((gt, neg_gt), 0)
+    #     gt_image = np.concatenate((np.ones(pos.shape[0], dtype=np.bool), np.zeros(neg.shape[0], dtype=np.bool)), 0)        
 
-        pro = evaluate(gt_pixel, scores, metric='pro')
-        auc_pixel = evaluate(gt_pixel.flatten(), scores.flatten(), metric='roc')
-        auc_image_max = evaluate(gt_image, scores.max(-1).max(-1), metric='roc')
-        print('Catergory: {:s}\tPixel-AUC: {:.6f}\tImage-AUC: {:.6f}\tPRO: {:.6f}'.format(category, auc_pixel, auc_image_max, pro))
+    #     pro = evaluate(gt_pixel, scores, metric='pro')
+    #     auc_pixel = evaluate(gt_pixel.flatten(), scores.flatten(), metric='roc')
+    #     auc_image_max = evaluate(gt_image, scores.max(-1).max(-1), metric='roc')
+    #     print('Catergory: {:s}\tPixel-AUC: {:.6f}\tImage-AUC: {:.6f}\tPRO: {:.6f}'.format(category, auc_pixel, auc_image_max, pro))
      
 
-def crop_images(loss_map, loader, args):
+def crop_images(loss_map, loader, mean, std, cfg):
     print("Starting cropping images...")
-    img_dir = f"outputs/{args.category}/images"
-    crops_dir = f"outputs/{args.category}/crops"
-    os.makedirs(img_dir, exist_ok=True)
-    os.makedirs(crops_dir, exist_ok=True)
+    os.makedirs(cfg.paths.images, exist_ok=True)
+    os.makedirs(cfg.paths.crops, exist_ok=True)
     
     print("[dbg] len(loader.dataset) =", len(loader.dataset))
     print("[dbg] loss_map.shape      =", getattr(loss_map, "shape", None))
@@ -142,7 +130,7 @@ def crop_images(loss_map, loader, args):
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             
-            mask, thr = threshold_heatmap(hm_up, method=args.threshold_method, percentile=float(args.threshold_value))
+            mask, thr = threshold_heatmap(hm_up, method=cfg.heatmap_threshold.method, percentile=float(cfg.heatmap_threshold.value))
             # clean mask
             K_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))    # remove salt-noise
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, K_open)
@@ -150,13 +138,13 @@ def crop_images(loss_map, loader, args):
             K_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))     # fuse close fragments
             mask = cv2.dilate(mask, K_dil, iterations=1)
 
-            boxes = components_to_bboxes(mask, min_area=300, ignore_border=True)
+            boxes = components_to_bboxes(mask, min_area=600, ignore_border=True)
             # --- merge touching/near boxes, then (optionally) expand ---
             boxes = merge_boxes_touching_or_near(boxes, gap=0, iou_thresh=0.5) 
             boxes = expand_boxes(boxes, H, W, expand_ratio=0.12)  # 12% padding; set 0.0 to disable
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 255, 0), thickness=2)
-            os.makedirs(crops_dir, exist_ok=True)
+            os.makedirs(cfg.paths.crops, exist_ok=True)
 
             stem = Path(p).stem
             defect = Path(p).parent.name
@@ -164,16 +152,16 @@ def crop_images(loss_map, loader, args):
             for bi, (x,y,w,h) in enumerate(boxes):
                 x0, y0, x1, y1 = pad_box(x,y,w,h,H,W,pad_ratio=0.05)
                 crop = img[y0:y1, x0:x1]
-                cv2.imwrite(os.path.join(crops_dir, f"{defect}_{stem}_box{bi}.png"), crop)
+                cv2.imwrite(os.path.join(cfg.paths.crops, f"{defect}_{stem}_box{bi}.png"), crop)
             
-            cv2.imwrite(os.path.join(img_dir, f"{defect}_{stem}_orig.png"), img)
-            cv2.imwrite(os.path.join(img_dir, f"{defect}_{stem}_overlay.png"), overlay)
-            cv2.imwrite(os.path.join(img_dir, f"{defect}_{stem}_mask.png"), mask)
-            cv2.imwrite(os.path.join(img_dir, f"{defect}_{stem}_boxes.png"), boxes_vis)
+            cv2.imwrite(os.path.join(cfg.paths.images, f"{defect}_{stem}_orig.png"), img)
+            cv2.imwrite(os.path.join(cfg.paths.images, f"{defect}_{stem}_overlay.png"), overlay)
+            cv2.imwrite(os.path.join(cfg.paths.images, f"{defect}_{stem}_mask.png"), mask)
+            cv2.imwrite(os.path.join(cfg.paths.images, f"{defect}_{stem}_boxes.png"), boxes_vis)
                    
     print("Cropping images completed.")
 
-def triplet_learning(args):
+def triplet_learning(cfg):
     print("Starting triplet learning...")
     triplet_model = ResNet18_MS3(pretrained=False)
     
@@ -206,11 +194,21 @@ def triplet_learning(args):
     
     print("Triplet learning completed.")
 
-def print_config_used(args):
-    print("Configuration used:")
-    for arg in vars(args):
-        print(f"{arg}: {getattr(args, arg)}")
-    print("\n")
+
+def load_train_datasets(transform, cfg):
+    image_list = sorted(glob(os.path.join(cfg.dataset.root, cfg.dataset.category, 'train', 'good', '*.png')))
+    train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
+    train_dataset = MVTecDataset(train_image_list, transform=transform)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.student_training.batch_size, shuffle=True, drop_last=False)
+    print("Training dataset loaded")
+    val_dataset = MVTecDataset(val_image_list, transform=transform)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.student_training.batch_size, shuffle=False, drop_last=False)
+    print("Validation dataset loaded")
+    test_image_list = glob(os.path.join(cfg.dataset.root, cfg.dataset.category, 'test', '*', '*.png'))
+    test_dataset = MVTecDataset(test_image_list, transform=transform)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
+    print("Test dataset loaded")
+    return train_loader, val_loader, test_loader
 
 if __name__ == "__main__":
     main()

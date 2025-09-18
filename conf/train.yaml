@@ -4,3 +4,4 @@ epochs: 100
 batch_size: 32
 mvtec_ad: mvtec_anomaly_detection
 model_save_path: snapshots
+output_path: outputs
