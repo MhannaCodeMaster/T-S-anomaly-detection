@@ -42,7 +42,7 @@ def main(cfg: DictConfig):
 
     if cfg.mode == 'train':
         print("Training on category: ", cfg.dataset.category)
-        train_loader, val_loader, test_loader = load_train_datasets(cfg, transform)
+        train_loader, val_loader, test_loader = load_train_datasets(transform, cfg)
     elif cfg.mode == 'test':
         print("Testing on category: ", cfg.category)
         test_neg_image_list = sorted(glob(os.path.join(cfg.dataset.mvtec_ad.root, cfg.dataset.category, 'test', 'good', '*.png')))
