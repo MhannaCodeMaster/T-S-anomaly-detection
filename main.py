@@ -33,10 +33,10 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    if cfg["mode"] == 'train':
+    if cfg["mode"] == "train":
         print("Training on category: ", cfg["dataset"]["category"])
         train_loader, val_loader, test_loader = load_train_datasets(transform, cfg)
-    elif cfg["mode"] == 'test':
+    elif cfg["mode"] == "test":
         print("Testing on category: ", cfg["dataset"]["category"])
         test_neg_image_list = sorted(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', 'good', '*.png')))
         test_pos_image_list = set(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', '*', '*.png'))) - set(test_neg_image_list)
@@ -51,15 +51,15 @@ def main():
     teacher.cuda()
     student.cuda()
 
-    if cfg.mode == 'train':        
+    if cfg["mode"] == "train":        
         if cfg["models"]["st_path"]:
             try:
-                print('loading model ' + cfg["models"]["st_path"])
+                print('loading model ' + cfg['models']['st_path'])
                 saved_dict = torch.load(cfg["models"]["st_path"])
                 student.load_state_dict(saved_dict['state_dict'])
                 best_student = copy.deepcopy(student)
             except Exception as e:
-                print(f"Error loading student model from {cfg["models"]["st_path"]}: {e}")
+                print(f"Error loading student model from {cfg['models']['st_path']}: {e}")
         else:
             best_student = train_val_student(teacher, student, train_loader, val_loader, cfg, out)
             

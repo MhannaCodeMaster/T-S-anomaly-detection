@@ -86,7 +86,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
                 # The loss = average squared distance between the teacher and student features, summed over feature levels.
                 loss += torch.sum((t_feat[i] - s_feat[i]) ** 2, 1).mean()
 
-            print('[%d/%d] loss: %f' % (epoch, cfg["student_training"]["epochs"], loss.item()))
+            print('[%d/%d] loss: %f' % (epoch, cfg['student_training']['epochs'], loss.item()))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -94,7 +94,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
             num_batches += 1
         
         avg_train_loss = running_loss / num_batches
-        print(f'Epoch [{epoch+1}/{cfg["student_training"]["epochs"]}] - Average Training Loss: {avg_train_loss:.6f}')
+        print(f'Epoch [{epoch+1}/{cfg['student_training']['epochs']}] - Average Training Loss: {avg_train_loss:.6f}')
 
         # Runs the test() function on the validation set.
         err = get_error_map(teacher, student, val_loader)
