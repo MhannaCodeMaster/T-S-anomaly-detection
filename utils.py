@@ -51,7 +51,7 @@ def get_error_map(teacher, student, loader):
     # Returns an (N, 64, 64) array of anomaly score maps, where N is the number of images (Higher = more anomalous).
     return loss_map
 
-def train_val_student(teacher, student, train_loader, val_loader, cfg):
+def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
     print("Student training started...")
     min_err = 10000 # Stores the best validation error so far.
     teacher.eval()  # Teacher model is forzen
@@ -62,7 +62,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg):
     # Using SGD optimizer for training the student model
     optimizer = torch.optim.SGD(student.parameters(), 0.4, momentum=0.9, weight_decay=1e-4)
     # Main training loop
-    for epoch in range(cfg.student_training.epochs):
+    for epoch in range(cfg["student_training"]["epochs"]):
         student.train()
         running_loss = 0.0
         num_batches = 0
@@ -86,7 +86,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg):
                 # The loss = average squared distance between the teacher and student features, summed over feature levels.
                 loss += torch.sum((t_feat[i] - s_feat[i]) ** 2, 1).mean()
 
-            print('[%d/%d] loss: %f' % (epoch, cfg.student_training.epochs, loss.item()))
+            print('[%d/%d] loss: %f' % (epoch, cfg["student_training"]["epochs"], loss.item()))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -94,7 +94,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg):
             num_batches += 1
         
         avg_train_loss = running_loss / num_batches
-        print(f'Epoch [{epoch+1}/{cfg.student_training.epochs}] - Average Training Loss: {avg_train_loss:.6f}')
+        print(f'Epoch [{epoch+1}/{cfg["student_training"]["epochs"]}] - Average Training Loss: {avg_train_loss:.6f}')
 
         # Runs the test() function on the validation set.
         err = get_error_map(teacher, student, val_loader)
@@ -103,13 +103,12 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg):
         print('Valid Loss: {:.7f}'.format(err_mean.item()))
         if err_mean < min_err:
             min_err = err_mean
-            run_dir = Path(HydraConfig.get().runtime.output_dir)
-            save_name = os.path.join(run_dir, cfg.models.student_dir, 'student_best.pth.tar')
+            save_name = os.path.join(out["student"], cfg["models"]["st_path"], 'student_best.pth.tar')
             dir_name = os.path.dirname(save_name)
             if dir_name and not os.path.exists(dir_name):
                 os.makedirs(dir_name)
             state_dict = {
-                'category': cfg.dataset.category,
+                'category': cfg["dataset"]["category"],
                 'state_dict': student.state_dict()
             }
             torch.save(state_dict, save_name)
@@ -292,7 +291,7 @@ def ramp(n, m):
         return v
 
 @torch.no_grad()
-def compute_train_calibration_stats(teacher, student, train_loader, cfg, device="cuda"):
+def compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda"):
     """
     Compute scalar μ, σ over all pixels of anomaly maps on normal training images.
     Saves to npz: {mean: float, std: float}.
@@ -324,8 +323,7 @@ def compute_train_calibration_stats(teacher, student, train_loader, cfg, device=
     var  = (sums2 / max(1, count)) - (mean * mean)
     std  = float(np.sqrt(max(var, 1e-12)))
 
-    run_dir = Path(HydraConfig.get().runtime.output_dir)
-    file_path = os.path.join(run_dir,cfg.calibration_path)
+    file_path = os.path.join(out["calibration"],cfg.calibration_path)
     np.savez(file_path, mean=float(mean), std=float(std))
     print(f"[calib] saved μ={mean:.6g}, σ={std:.6g}")
     return mean, std

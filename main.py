@@ -1,15 +1,13 @@
-import copy
 import os
-import cv2
 from pathlib import Path
-import hydra
-from omegaconf import DictConfig, OmegaConf
+import copy
 
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.transforms.functional import InterpolationMode
 import numpy as np
+import cv2
 
 from evaluate import evaluate
 from sklearn.model_selection import train_test_split
@@ -19,17 +17,12 @@ from models.teacher import ResNet18_MS3
 from data.mvtec_dataset import MVTecDataset
 from data.data_utils import load_ground_truth
 
-# from conf import load_args, load_config
+from conf.config import *
 from utils import *
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
-def main(cfg: DictConfig):
-    # args = load_args()
-    # config = load_config(args.config)
-    
-    # for key, value in config.items():
-    #     if getattr(args, key) is None:
-    #         setattr(args, key, value)
+def main():
+    cfg = get_config()
+    out = resolve_paths(cfg)
     
     np.random.seed(0)
     torch.manual_seed(0)
@@ -40,13 +33,13 @@ def main(cfg: DictConfig):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    if cfg.mode == 'train':
-        print("Training on category: ", cfg.dataset.category)
+    if cfg["mode"] == 'train':
+        print("Training on category: ", cfg["dataset"]["category"])
         train_loader, val_loader, test_loader = load_train_datasets(transform, cfg)
-    elif cfg.mode == 'test':
-        print("Testing on category: ", cfg.category)
-        test_neg_image_list = sorted(glob(os.path.join(cfg.dataset.mvtec_ad.root, cfg.dataset.category, 'test', 'good', '*.png')))
-        test_pos_image_list = set(glob(os.path.join(cfg.dataset.mvtec_ad.root, cfg.dataset.category, 'test', '*', '*.png'))) - set(test_neg_image_list)
+    elif cfg["mode"] == 'test':
+        print("Testing on category: ", cfg["dataset"]["category"])
+        test_neg_image_list = sorted(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', 'good', '*.png')))
+        test_pos_image_list = set(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', '*', '*.png'))) - set(test_neg_image_list)
         test_pos_image_list = sorted(list(test_pos_image_list))
         test_neg_dataset = MVTecDataset(test_neg_image_list, transform=transform)
         test_pos_dataset = MVTecDataset(test_pos_image_list, transform=transform)
@@ -59,17 +52,20 @@ def main(cfg: DictConfig):
     student.cuda()
 
     if cfg.mode == 'train':        
-        if cfg.models.load_student:
-            print('loading model ' + cfg.models.load_student)
-            saved_dict = torch.load(cfg.models.load_student)
-            student.load_state_dict(saved_dict['state_dict'])
-            best_student = copy.deepcopy(student)
-        else:   
-            best_student = train_val_student(teacher, student, train_loader, val_loader, cfg)
+        if cfg["models"]["st_path"]:
+            try:
+                print('loading model ' + cfg["models"]["st_path"])
+                saved_dict = torch.load(cfg["models"]["st_path"])
+                student.load_state_dict(saved_dict['state_dict'])
+                best_student = copy.deepcopy(student)
+            except Exception as e:
+                print(f"Error loading student model from {cfg["models"]["st_path"]}: {e}")
+        else:
+            best_student = train_val_student(teacher, student, train_loader, val_loader, cfg, out)
             
         test_err_map = get_error_map(teacher, best_student, test_loader)
-        mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, device="cuda")
-        crop_images(test_err_map, test_loader, mean, std, cfg)
+        mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda")
+        crop_images(test_err_map, test_loader, mean, std, cfg, out)
         # triplet_learning(args)
     # elif args.mode == 'test':
     #     saved_dict = torch.load(args.checkpoint)
@@ -101,10 +97,8 @@ def main(cfg: DictConfig):
     #     print('Catergory: {:s}\tPixel-AUC: {:.6f}\tImage-AUC: {:.6f}\tPRO: {:.6f}'.format(category, auc_pixel, auc_image_max, pro))
      
 
-def crop_images(loss_map, loader, mean, std, cfg):
+def crop_images(loss_map, loader, mean, std, cfg, out):
     print("Starting cropping images...")
-    os.makedirs(cfg.paths.images, exist_ok=True)
-    os.makedirs(cfg.paths.crops, exist_ok=True)
     
     print("[dbg] len(loader.dataset) =", len(loader.dataset))
     print("[dbg] loss_map.shape      =", getattr(loss_map, "shape", None))
@@ -132,7 +126,7 @@ def crop_images(loss_map, loader, mean, std, cfg):
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             
-            mask, thr = threshold_heatmap(hm_z, method=cfg.heatmap_threshold.method, percentile=float(cfg.heatmap_threshold.value))
+            mask, thr = threshold_heatmap(hm_z, method=cfg["heatmap_threshold"]["method"], percentile=float(cfg["heatmap_threshold"]["value"]))
             # clean mask
             K_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))    # remove salt-noise
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, K_open)
@@ -146,7 +140,6 @@ def crop_images(loss_map, loader, mean, std, cfg):
             boxes = expand_boxes(boxes, H, W, expand_ratio=0.12)  # 12% padding; set 0.0 to disable
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 255, 0), thickness=2)
-            os.makedirs(cfg.paths.crops, exist_ok=True)
 
             stem = Path(p).stem
             defect = Path(p).parent.name
@@ -154,12 +147,12 @@ def crop_images(loss_map, loader, mean, std, cfg):
             for bi, (x,y,w,h) in enumerate(boxes):
                 x0, y0, x1, y1 = pad_box(x,y,w,h,H,W,pad_ratio=0.05)
                 crop = img[y0:y1, x0:x1]
-                cv2.imwrite(os.path.join(cfg.paths.crops, f"{defect}_{stem}_box{bi}.png"), crop)
+                cv2.imwrite(os.path.join(out["crops"], f"{defect}_{stem}_box{bi}.png"), crop)
             
-            cv2.imwrite(os.path.join(cfg.paths.images, f"{defect}_{stem}_orig.png"), img)
-            cv2.imwrite(os.path.join(cfg.paths.images, f"{defect}_{stem}_overlay.png"), overlay)
-            cv2.imwrite(os.path.join(cfg.paths.images, f"{defect}_{stem}_mask.png"), mask)
-            cv2.imwrite(os.path.join(cfg.paths.images, f"{defect}_{stem}_boxes.png"), boxes_vis)
+            cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_orig.png"), img)
+            cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_overlay.png"), overlay)
+            cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_mask.png"), mask)
+            cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_boxes.png"), boxes_vis)
                    
     print("Cropping images completed.")
 
@@ -196,21 +189,21 @@ def triplet_learning(cfg):
     
     print("Triplet learning completed.")
 
-
 def load_train_datasets(transform, cfg):
-    image_list = sorted(glob(os.path.join(cfg.dataset.root, cfg.dataset.category, 'train', 'good', '*.png')))
+    image_list = sorted(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'train', 'good', '*.png')))
     train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
     train_dataset = MVTecDataset(train_image_list, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=cfg.student_training.batch_size, shuffle=True, drop_last=False)
+    train_loader = DataLoader(train_dataset, batch_size=cfg["student_training"]["batch_size"], shuffle=True, drop_last=False)
     print("Training dataset loaded")
     val_dataset = MVTecDataset(val_image_list, transform=transform)
-    val_loader = DataLoader(val_dataset, batch_size=cfg.student_training.batch_size, shuffle=False, drop_last=False)
+    val_loader = DataLoader(val_dataset, batch_size=cfg["student_training"]["batch_size"], shuffle=False, drop_last=False)
     print("Validation dataset loaded")
-    test_image_list = glob(os.path.join(cfg.dataset.root, cfg.dataset.category, 'test', '*', '*.png'))
+    test_image_list = glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', '*', '*.png'))
     test_dataset = MVTecDataset(test_image_list, transform=transform)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
     print("Test dataset loaded")
     return train_loader, val_loader, test_loader
+
 
 if __name__ == "__main__":
     main()

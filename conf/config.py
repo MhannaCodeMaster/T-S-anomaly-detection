@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 import yaml
 
 def load_config(config_path):
@@ -31,26 +32,77 @@ def load_args():
     Returns: 
         args: parsed command line arguments.
     """
-    parser = argparse.ArgumentParser(description="Anomaly Detection")
-    parser.add_argument("--config", type=str, required=False,  default="/config/train.yaml",help="path to the yaml config file")
-    parser.add_argument("--mode", type=str, default="train", help="train or test")
-    parser.add_argument("--output_path", type=str, default="outputs", help="path to save outputs like crops, calibration stats, images, and etc.")
-    # required training super-parameters
-    parser.add_argument("--checkpoint", type=str, default=None, help="student checkpoint")
-    parser.add_argument("--category", type=str , default=None, help="category name for MvTec AD dataset")
-    parser.add_argument("--epochs", type=int, default=None, help='number of epochs')
+    p = argparse.ArgumentParser(description="Anomaly Detection")
+    p.add_argument("--config", type=str, required=True, default="conf/config.yaml", help="Path to config file")
+    p.add_argument("--mode", type=str, required=False, choices=["train", "test"], default="train", help="Operation mode: train or test")
+    p.add_argument("--dataset.root", required=True, type=str, help="Path to dataset root directory")
+    p.add_argument("--dataset.category", required=False, type=str, help="Dataset category (e.g., cable, hazelnut)")
+    p.add_argument("--student_training.epochs", type=int, required=False, help="Number of student training epochs")
+    p.add_argument("--student_training.batch_size", type=int, required=False, help="Batch size for student training")
+    p.add_argument("--triplet_training.epochs", type=int, required=False, help="Number of triplet training epochs")
+    p.add_argument("--triplet_training.batch_size", type=int, required=False, help="Batch size for triplet training")
+    p.add_argument("--heatmap_threshold.method", type=int, required=False, help="Heatmap thresholding method")
+    p.add_argument("--heatmap_threshold.value", type=int, required=False, choices=["percentile", "otsu"], help="Heatmap threshold value if method percentile")
+    p.add_argument("--models.st_path", type=str, required=False, help="Path to student model checkpoint")
+    p.add_argument("--models.tl_path", type=str, required=False, help="Path to triplet learning model checkpoint")
 
-    # Thresholding method and value
-    parser.add_argument("--threshold-method", type=str, default="percentile", required=False, help="thresholding method: otsu, percentile")
-    parser.add_argument("--threshold-value", type=str, default="99.5", required=False, help="thresholding method: otsu, percentile")
-    
-    parser.add_argument("--checkpoint-epoch", type=int, default=None, help="checkpoint resumed for testing (1-based)")
-    parser.add_argument("--batch-size", type=int, default=None, help='batch size')
-    # trivial parameters
-    parser.add_argument("--result-path", type=str, default=None, help="save results")
-    parser.add_argument("--save-fig", action='store_true', help="save images with anomaly score")
-    parser.add_argument("--mvtec-ad", type=str, default=None, help="MvTec-AD dataset path")
-    parser.add_argument('--model-save-path', type=str, default=None, help='path where student models are saved')
-
-    args = parser.parse_args()
+    args = p.parse_args()
     return args
+
+def set_deep(cfg, dotted_key, value):
+    """Set cfg['a']['b']['c'] = value if dotted_key='a.b.c'."""
+    keys = dotted_key.split(".")
+    d = cfg
+    for k in keys[:-1]:
+        if k not in d:
+            d[k] = {}   # create if missing
+        d = d[k]
+    d[keys[-1]] = value
+
+def apply_overrides(cfg, args):
+    for key, val in vars(args).items():
+        if val is None or key == "config":
+            continue
+        set_deep(cfg, key, val)
+    return cfg
+
+def get_config():
+    args = load_args()
+    cfg = load_config(args.config)
+    cfg = apply_overrides(cfg, args)
+    return cfg
+
+def resolve_paths(cfg):
+    """Create timestamped run directories under paths.root/mode/category/<stamp>."""
+    stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    root = Path("outputs")
+    base = root / cfg['mode'] / cfg['dataset']['category'] / stamp
+    out = {
+        'base': base,
+        'images':  base / 'images',
+        'crops':   base / 'crops',
+        'student': base / 'student',
+        'triplet': base / 'triplet',
+        'calibration': base / 'calibration'
+    }
+    # Make dirs
+    for k in ('images','crops','student','triplet','calibration'):
+        out[k].mkdir(parents=True, exist_ok=True)
+    return out
+
+def set_deep(cfg, dotted_key, value):
+    """Set cfg['a']['b']['c'] = value if dotted_key='a.b.c'."""
+    keys = dotted_key.split(".")
+    d = cfg
+    for k in keys[:-1]:
+        if k not in d:
+            d[k] = {}   # create if missing
+        d = d[k]
+    d[keys[-1]] = value
+
+def apply_overrides(cfg, args):
+    for key, val in vars(args).items():
+        if val is None or key == "config":
+            continue
+        set_deep(cfg, key, val)
+    return cfg

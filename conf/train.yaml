@@ -1,7 +1,26 @@
 mode: train
-category: leather
-epochs: 100
-batch_size: 32
-mvtec_ad: mvtec_anomaly_detection
-model_save_path: snapshots
-output_path: outputs
+
+paths:
+  root: outputs
+  images: ${path.root}/${mode}/${dataset.category}/${now:%Y-%m-%d_%H-%M-%S}/images
+  crops: ${path.root}/${mode}/${dataset.category}/${now:%Y-%m-%d_%H-%M-%S}/crops
+
+dataset:
+  name: mvtec_anomaly_detection
+  root: data
+  category: leather
+
+studnent_training:
+  epochs: 100
+  batch_size: 32
+
+triplet_training:
+  epochs: 100
+  batch_size: 32
+
+heatmap_threshold:
+  method: percentile
+  value: 95.0
+
+calibration_path: ${path.root}/${mode}/${dataset.category}/${now:%Y-%m-%d_%H-%M-%S}/calibration/train_calib.npz
+
