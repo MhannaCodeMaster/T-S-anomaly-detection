@@ -6,7 +6,6 @@ import os
 import cv2
 import numpy as np
 from pathlib import Path
-from hydra.core.hydra_config import HydraConfig
 
 
 def get_error_map(teacher, student, loader):

@@ -9,13 +9,13 @@ from torchvision.transforms.functional import InterpolationMode
 import numpy as np
 import cv2
 
-from evaluate import evaluate
 from sklearn.model_selection import train_test_split
 from glob import glob
 
 from models.teacher import ResNet18_MS3
 from data.mvtec_dataset import MVTecDataset
 from data.data_utils import load_ground_truth
+from evaluate import evaluate
 
 from conf.config import *
 from utils import *
@@ -60,6 +60,7 @@ def main():
                 best_student = copy.deepcopy(student)
             except Exception as e:
                 print(f"Error loading student model from {cfg['models']['st_path']}: {e}")
+                exit(1)
         else:
             best_student = train_val_student(teacher, student, train_loader, val_loader, cfg, out)
             
