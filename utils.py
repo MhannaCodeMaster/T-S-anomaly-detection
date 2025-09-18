@@ -102,7 +102,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
         print('Valid Loss: {:.7f}'.format(err_mean.item()))
         if err_mean < min_err:
             min_err = err_mean
-            save_name = os.path.join(out["student"], cfg["models"]["st_path"], 'student_best.pth.tar')
+            save_name = os.path.join(out["student"],'student_best.pth.tar')
             dir_name = os.path.dirname(save_name)
             if dir_name and not os.path.exists(dir_name):
                 os.makedirs(dir_name)
@@ -322,7 +322,7 @@ def compute_train_calibration_stats(teacher, student, train_loader, cfg, out, de
     var  = (sums2 / max(1, count)) - (mean * mean)
     std  = float(np.sqrt(max(var, 1e-12)))
 
-    file_path = os.path.join(out["calibration"],cfg.calibration_path)
+    file_path = os.path.join(out["calibration"],'calib_stats.npz')
     np.savez(file_path, mean=float(mean), std=float(std))
     print(f"[calib] saved μ={mean:.6g}, σ={std:.6g}")
     return mean, std
