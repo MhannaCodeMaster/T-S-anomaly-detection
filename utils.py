@@ -61,6 +61,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
     # Using SGD optimizer for training the student model
     optimizer = torch.optim.SGD(student.parameters(), 0.4, momentum=0.9, weight_decay=1e-4)
     # Main training loop
+    print(f"Epoch: 0/{cfg['student_training']['epochs']}",end="\r")
     for epoch in range(cfg["student_training"]["epochs"]):
         student.train()
         running_loss = 0.0
@@ -93,13 +94,11 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
             num_batches += 1
         
         avg_train_loss = running_loss / num_batches
-        print(f"Epoch [{epoch+1}/{cfg['student_training']['epochs']}] - Average Training Loss: {avg_train_loss:.6f}")
 
         # Runs the test() function on the validation set.
         err = get_error_map(teacher, student, val_loader)
         
         err_mean = err.mean()
-        print('Valid Loss: {:.7f}'.format(err_mean.item()))
         if err_mean < min_err:
             min_err = err_mean
             save_name = os.path.join(out["student"],'student_best.pth.tar')
@@ -112,6 +111,8 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
             }
             torch.save(state_dict, save_name)
             best_student = copy.deepcopy(student)
+        print(f"Epoch: [{epoch+1}/{cfg['student_training']['epochs']}] - Avg training loss: {avg_train_loss:.6f} - Validation loss: {err_mean.item():.7f}",end="\r")
+        
     print("Student training completed.")
     return best_student
     

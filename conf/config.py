@@ -29,13 +29,12 @@ def load_config(config_path):
 def load_args():
     """
     Loads command line arguments.
-    
     Returns: 
         args: parsed command line arguments.
     """
     p = argparse.ArgumentParser(description="Anomaly Detection")
+    p.add_argument("--mode", type=str, required=True, choices=["train", "test"], default="train", help="Operation mode: train or test")
     p.add_argument("--config", type=str, required=True, default="conf/config.yaml", help="Path to config file")
-    p.add_argument("--mode", type=str, required=False, choices=["train", "test"], default="train", help="Operation mode: train or test")
     p.add_argument("--dataset.root", required=True, type=str, help="Path to dataset root directory")
     p.add_argument("--dataset.category", required=False, type=str, help="Dataset category (e.g., cable, hazelnut)")
     p.add_argument("--student_training.epochs", type=int, required=False, help="Number of student training epochs")
@@ -46,6 +45,11 @@ def load_args():
     p.add_argument("--heatmap_threshold.value", type=float, required=False, help="Heatmap threshold value if method percentile")
     p.add_argument("--models.st_path", type=str, required=False, help="Path to student model checkpoint")
     p.add_argument("--models.tl_path", type=str, required=False, help="Path to triplet learning model checkpoint")
+    p.add_argument("--box.expand", type=float, required=False,  default=0.5, help="Box expansion ratio")
+    p.add_argument("--box.min_area", type=int, required=False, default=600, help="Minimum area for box filtering")
+    p.add_argument("--nms.mode", type=str, required=False, choices=["mean", "max"], default="mean", help="NMS scoring mode")
+    p.add_argument("--nms.score_thr", type=float, required=False, default=0.1, help="NMS score threshold")
+    p.add_argument("--nms.thr", type=float, required=False, default=0.4, help="NMS IoU threshold")
 
     args = p.parse_args()
     return args

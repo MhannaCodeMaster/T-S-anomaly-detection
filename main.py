@@ -99,11 +99,7 @@ def main():
      
 
 def crop_images(loss_map, loader, mean, std, cfg, out):
-    print("Starting cropping images...")
-    
-    print("[dbg] len(loader.dataset) =", len(loader.dataset))
-    print("[dbg] loss_map.shape      =", getattr(loss_map, "shape", None))
-    
+    print("Starting cropping images...",end='\n')    
     idx = 0
     for batch in loader:
         img_paths, _ = batch
@@ -112,11 +108,12 @@ def crop_images(loss_map, loader, mean, std, cfg, out):
         hm_batch = loss_map[idx: idx + bs]
         idx += bs
         
+        print(f"image processed: [0/{len(img_paths)}]",end="\r")
         for k, p in enumerate(img_paths):
             hm64 = hm_batch[k]
             img = cv2.imread(p)
             if img is None:
-                print(f"Warning: Unable to read image at {p}. Skipping.")
+                print(f"Warning: Unable to read image at {p}. Skipping.",end="\n")
                 continue
             
             H, W = img.shape[:2]
@@ -135,21 +132,21 @@ def crop_images(loss_map, loader, mean, std, cfg, out):
             K_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))     # fuse close fragments
             mask = cv2.dilate(mask, K_dil, iterations=1)
 
-            boxes = components_to_bboxes(mask, min_area=600, ignore_border=True)
+            boxes = components_to_bboxes(mask, min_area=cfg["box"]["min_area"], ignore_border=True)
             # Run NMS
-            scores = get_box_scores(boxes, hm_z, mode='mean')
-            score_thr = 0.1
-            nms_thr   = 0.4    # IoU threshold
+            scores = get_box_scores(boxes, hm_z, mode=cfg["nms"]["mode"])
+            score_thr = cfg["nms"]["score_thr"]  # confidence threshold
+            nms_thr   = cfg["nms"]["thr"]
             indices = cv2.dnn.NMSBoxes(boxes, scores, score_thr, nms_thr)
             if len(indices) > 0:
                 indices = indices.flatten()
                 boxes = [boxes[i] for i in indices]
-                
+
             # --- merge touching/near boxes, then (optionally) expand ---
             # boxes = merge_boxes_touching_or_near(boxes, gap=0, iou_thresh=0.5) 
-            boxes = expand_boxes(boxes, H, W, expand_ratio=0.12)  # 12% padding; set 0.0 to disable
+            boxes = expand_boxes(boxes, H, W, expand_ratio=cfg["box"]["expand"])  # 5% padding; set 0.0 to disable
             
-            boxes_vis = draw_boxes(overlay, boxes, color=(0, 255, 0), thickness=2)
+            boxes_vis = draw_boxes(overlay, boxes, color=(255, 0, 0), thickness=2)
 
             stem = Path(p).stem
             defect = Path(p).parent.name
@@ -163,8 +160,9 @@ def crop_images(loss_map, loader, mean, std, cfg, out):
             cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_overlay.png"), overlay)
             cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_mask.png"), mask)
             cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_boxes.png"), boxes_vis)
+            print(f"image processed: [{k+1}/{len(img_paths)}]",end="\r")
                    
-    print("Cropping images completed.")
+    print("Cropping images completed.",end="\n")
 
 def triplet_learning(cfg):
     print("Starting triplet learning...")
