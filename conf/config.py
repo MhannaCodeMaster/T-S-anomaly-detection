@@ -33,9 +33,12 @@ def load_args():
         args: parsed command line arguments.
     """
     p = argparse.ArgumentParser(description="Anomaly Detection")
+    #----- Required args -----#
     p.add_argument("--mode", type=str, required=True, choices=["train", "test"], default="train", help="Operation mode: train or test")
     p.add_argument("--config", type=str, required=True, default="conf/config.yaml", help="Path to config file")
     p.add_argument("--dataset.root", required=True, type=str, help="Path to dataset root directory")
+    
+    #----- Optional args -----#
     p.add_argument("--dataset.category", required=False, type=str, help="Dataset category (e.g., cable, hazelnut)")
     p.add_argument("--student_training.epochs", type=int, required=False, help="Number of student training epochs")
     p.add_argument("--student_training.batch_size", type=int, required=False, help="Batch size for student training")

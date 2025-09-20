@@ -49,73 +49,7 @@ def get_error_map(teacher, student, loader):
     print("anomaly score maps computed.")    
     # Returns an (N, 64, 64) array of anomaly score maps, where N is the number of images (Higher = more anomalous).
     return loss_map
-
-def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
-    print("Student training started...")
-    min_err = 10000 # Stores the best validation error so far.
-    teacher.eval()  # Teacher model is forzen
-    student.train() # Student model is set to training mode
-    
-    best_student = None
-    
-    # Using SGD optimizer for training the student model
-    optimizer = torch.optim.SGD(student.parameters(), 0.4, momentum=0.9, weight_decay=1e-4)
-    # Main training loop
-    print(f"Epoch: 0/{cfg['student_training']['epochs']}",end="\r")
-    for epoch in range(cfg["student_training"]["epochs"]):
-        student.train()
-        running_loss = 0.0
-        num_batches = 0
-        
-        # Training loop per batch
-        for batch_data in train_loader:
-            _, batch_img = batch_data
-            batch_img = batch_img.cuda()
-
-            # Feeding images for both teacher and student networks
-            with torch.no_grad():
-                # Teacher ouputs are treated as the target feature maps.
-                t_feat = teacher(batch_img) # Teacher feature extraction (frozen)
-            s_feat = student(batch_img)     # Student feature extraction (to be trained)
-
-            loss =  0
-            for i in range(len(t_feat)):
-                # Both teacher and student features are L2-normalized (F.normalize).
-                t_feat[i] = F.normalize(t_feat[i], dim=1)
-                s_feat[i] = F.normalize(s_feat[i], dim=1)
-                # The loss = average squared distance between the teacher and student features, summed over feature levels.
-                loss += torch.sum((t_feat[i] - s_feat[i]) ** 2, 1).mean()
-
-            print("[%d/%d] loss: %f" % (epoch, cfg['student_training']['epochs'], loss.item()))
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-            num_batches += 1
-        
-        avg_train_loss = running_loss / num_batches
-
-        # Runs the test() function on the validation set.
-        err = get_error_map(teacher, student, val_loader)
-        
-        err_mean = err.mean()
-        if err_mean < min_err:
-            min_err = err_mean
-            save_name = os.path.join(out["student"],'student_best.pth.tar')
-            dir_name = os.path.dirname(save_name)
-            if dir_name and not os.path.exists(dir_name):
-                os.makedirs(dir_name)
-            state_dict = {
-                'category': cfg["dataset"]["category"],
-                'state_dict': student.state_dict()
-            }
-            torch.save(state_dict, save_name)
-            best_student = copy.deepcopy(student)
-        print(f"Epoch: [{epoch+1}/{cfg['student_training']['epochs']}] - Avg training loss: {avg_train_loss:.6f} - Validation loss: {err_mean.item():.7f}",end="\r")
-        
-    print("Student training completed.")
-    return best_student
-    
+   
 def normalize_01(x: np.ndarray):
     x = x.astype(np.float32)
     mn, mx = float(x.min()), float(x.max())
