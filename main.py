@@ -65,7 +65,10 @@ def main():
             best_student = train_val_student(teacher, student, train_loader, val_loader, cfg, out)
             
         test_err_map = get_error_map(teacher, best_student, test_loader)
-        mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda")
+        if cfg["models"]["calibration"]:
+            mean, std = load_calibration_stats(cfg["models"]["calibration"])
+        else:
+            mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda")
         crop_images(test_err_map, test_loader, mean, std, cfg, out)
         # triplet_learning(args)
     # elif args.mode == 'test':
@@ -214,6 +217,16 @@ def load_train_datasets(transform, cfg):
     print("Datasets loading completed.")
     return train_loader, val_loader, test_loader
 
+def load_calibration_stats(cali_path):
+    try:
+        stats = np.load(cali_path)
+        mean = stats['mean']
+        std = stats['std']
+        print(f"Loaded calibration stats: mean={mean}, std={std}")
+        return mean, std
+    except Exception as e:
+        print(f"Error loading calibration stats from {cali_path}: {e}")
+        exit(1)
 
 if __name__ == "__main__":
     main()

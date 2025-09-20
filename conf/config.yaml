@@ -19,6 +19,7 @@ heatmap_threshold:
 models:
   st_path: null
   tl_path: null
+  calibration: null
 
 box: 
   expand: 0.5
