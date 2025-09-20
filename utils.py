@@ -110,31 +110,39 @@ def pad_box(x, y, w, h, H, W, pad_ratio=0.05):
     x1, y1 = min(W, x + w + px), min(H, y + h + py)
     return x0, y0, x1, y1
 
-def is_contained(inner, outer, tol=0.9):
-    # inner, outer: (x,y,w,h)
-    xi, yi, wi, hi = inner
-    xo, yo, wo, ho = outer
-    xi1, yi1 = xi+wi, yi+hi
-    xo1, yo1 = xo+wo, yo+ho
-    inter_x0, inter_y0 = max(xi, xo), max(yi, yo)
-    inter_x1, inter_y1 = min(xi1, xo1), min(yi1, yo1)
+def is_contained(small_box, large_box, tol=0.9):
+    # small_box, large_box: (x,y,w,h)
+    xi, yi, wi, hi = small_box
+    xo, yo, wo, ho = large_box
+    xi1 = xi+wi
+    yi1 = yi+hi
+    xo1 = xo+wo
+    yo1 = yo+ho
+    inter_x0 = max(xi, xo)
+    inter_y0 = max(yi, yo)
+    inter_x1 = min(xi1, xo1)
+    inter_y1 = min(yi1, yo1)
     inter_area = max(0, inter_x1-inter_x0) * max(0, inter_y1-inter_y0)
     return inter_area >= tol*(wi*hi)
 
 def remove_nested_boxes(boxes, tolerance=0.7):   
-    if not boxes:
-        return []
+    """Remove boxes that are fully or mostly contained within another box."""
+    # first sort boxes by area
+    boxes = sorted(boxes, key=lambda b: b[2]*b[3])
     keep = []
+    boxes_to_drop=[]
+    # loop through boxes, smallest to largest
     for i, box in enumerate(boxes):
         drop = False
-        for j, box_j in enumerate(keep):
-            if i == j:
-                continue
-            if is_contained(box, box_j, tolerance) or is_contained(box_j, box, tolerance):
+        # Compare smallest box to all larger boxes
+        for j in range(i+1, len(boxes)):
+            # if box[i] is contained at least in one of the larger boxes, drop it
+            if is_contained(boxes[i], boxes[j], tol=tolerance):
                 drop = True
                 break
         if not drop:
             keep.append(box)
+        
     return keep
 
 def boxes_touch_or_near(a, b, gap=0):
