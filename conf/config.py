@@ -45,6 +45,7 @@ def load_args():
     p.add_argument("--heatmap_threshold.value", type=float, required=False, help="Heatmap threshold value if method percentile")
     p.add_argument("--models.st_path", type=str, required=False, help="Path to student model checkpoint")
     p.add_argument("--models.tl_path", type=str, required=False, help="Path to triplet learning model checkpoint")
+    p.add_argument("--models.calibration", type=str, required=False, help="Path to the calibration variables")
     p.add_argument("--box.expand", type=float, required=False,  default=0.5, help="Box expansion ratio")
     p.add_argument("--box.min_area", type=int, required=False, default=600, help="Minimum area for box filtering")
     p.add_argument("--nms.mode", type=str, required=False, choices=["mean", "max"], default="mean", help="NMS scoring mode")
