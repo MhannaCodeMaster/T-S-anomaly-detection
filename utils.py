@@ -289,6 +289,30 @@ def ramp(n, m):
             v[m:-m] = 1.0
         return v
 
+def get_box_scores(boxes, hm, mode="mean"):
+    """
+    boxes: list of (x,y,w,h)
+    hm: calibrated heatmap (float32, HxW)
+    mode: "mean" or "max"
+    returns: list of scores
+    """
+    scores = []
+    H, W = hm.shape
+    for (x, y, w, h) in boxes:
+        x0 = max(0, x)
+        y0 = max(0, y)
+        x1 = min(W, x + w)
+        y1 = min(H, y + h)
+        patch = hm[y0:y1, x0:x1]
+        if patch.size == 0:
+            scores.append(0.0)
+            continue
+        if mode == "max":
+            scores.append(float(np.max(patch)))
+        else:  # mean
+            scores.append(float(np.mean(patch)))
+    return scores
+
 @torch.no_grad()
 def compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda"):
     """

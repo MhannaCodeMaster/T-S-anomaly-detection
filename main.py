@@ -136,8 +136,17 @@ def crop_images(loss_map, loader, mean, std, cfg, out):
             mask = cv2.dilate(mask, K_dil, iterations=1)
 
             boxes = components_to_bboxes(mask, min_area=600, ignore_border=True)
+            # Run NMS
+            scores = get_box_scores(boxes, hm_z, mode='mean')
+            score_thr = 0.1
+            nms_thr   = 0.4    # IoU threshold
+            indices = cv2.dnn.NMSBoxes(boxes, scores, score_thr, nms_thr)
+            if len(indices) > 0:
+                indices = indices.flatten()
+                boxes = [boxes[i] for i in indices]
+                
             # --- merge touching/near boxes, then (optionally) expand ---
-            boxes = merge_boxes_touching_or_near(boxes, gap=0, iou_thresh=0.5) 
+            # boxes = merge_boxes_touching_or_near(boxes, gap=0, iou_thresh=0.5) 
             boxes = expand_boxes(boxes, H, W, expand_ratio=0.12)  # 12% padding; set 0.0 to disable
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 255, 0), thickness=2)
