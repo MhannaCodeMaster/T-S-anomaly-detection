@@ -110,46 +110,32 @@ def pad_box(x, y, w, h, H, W, pad_ratio=0.05):
     x1, y1 = min(W, x + w + px), min(H, y + h + py)
     return x0, y0, x1, y1
 
-def merge_boxes_touching_or_near(boxes, gap=4, iou_thresh=0.0):
-    """
-    Merge boxes that touch or are within 'gap' pixels (via gap-expansion overlap).
-    Optionally also merge if IoU exceeds iou_thresh.
-    boxes: list[(x,y,w,h), ...]
-    """
+def is_contained(inner, outer, tol=0.9):
+    # inner, outer: (x,y,w,h)
+    xi, yi, wi, hi = inner
+    xo, yo, wo, ho = outer
+    xi1, yi1 = xi+wi, yi+hi
+    xo1, yo1 = xo+wo, yo+ho
+    inter_x0, inter_y0 = max(xi, xo), max(yi, yo)
+    inter_x1, inter_y1 = min(xi1, xo1), min(yi1, yo1)
+    inter_area = max(0, inter_x1-inter_x0) * max(0, inter_y1-inter_y0)
+    return inter_area >= tol*(wi*hi)
+
+def merge_boxes(boxes, tolerance=0.7):   
     if not boxes:
         return []
-
-    # Convert to x1,y1,x2,y2
-    B = np.array([[x, y, x+w, y+h] for (x, y, w, h) in boxes], dtype=np.int32)
-
-    merged = True
-    while merged:
-        merged = False
-        keep = []
-        used = np.zeros(len(B), dtype=bool)
-        for i in range(len(B)):
-            if used[i]:
+    keep = []
+    for i, box in enumerate(boxes):
+        contained = False
+        for j, box_j in enumerate(keep):
+            if i == j:
                 continue
-            xi1, yi1, xi2, yi2 = B[i]
-            for j in range(i+1, len(B)):
-                if used[j]:
-                    continue
-                xj1, yj1, xj2, yj2 = B[j]
-                near = boxes_touch_or_near([xi1, yi1, xi2, yi2], [xj1, yj1, xj2, yj2], gap)
-                ok_iou = (iou_thresh > 0.0) and (iou([xi1, yi1, xi2, yi2], [xj1, yj1, xj2, yj2]) >= iou_thresh)
-                if near or ok_iou:
-                    # union
-                    xi1, yi1 = min(xi1, xj1), min(yi1, yj1)
-                    xi2, yi2 = max(xi2, xj2), max(yi2, yj2)
-                    used[j] = True
-                    merged = True
-            used[i] = True
-            keep.append([xi1, yi1, xi2, yi2])
-        B = np.array(keep, dtype=np.int32)
-
-    # Back to x,y,w,h
-    out = [(int(x1), int(y1), int(x2-x1), int(y2-y1)) for (x1, y1, x2, y2) in B.tolist()]
-    return out
+            if is_contained(box, box_j, tolerance) or is_contained(box_j, box, tolerance):
+                contained = True
+                break
+        if not contained:
+            keep.append(box)
+    return keep
 
 def boxes_touch_or_near(a, b, gap=0):
         ax1, ay1, ax2, ay2 = a
