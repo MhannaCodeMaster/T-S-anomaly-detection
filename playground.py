@@ -1,90 +1,62 @@
-# from roboflow import Roboflow
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
-# rf = Roboflow(api_key="VUR5Jn1GLOzjx7FNbmUY")
-# ds = rf.workspace("ts-nnhge").project("defect-labeling-ffxog").version(1).download("folder")
+def draw_boxes(boxes, title="Boxes"):
+    fig, ax = plt.subplots()
+    ax.set_title(title)
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
+    ax.set_aspect('equal')
 
-import os
-import random
-from pathlib import Path
-from PIL import Image
-import numpy as np
+    for (x, y, w, h) in boxes:
+        rect = patches.Rectangle((x, y), w, h, 
+                                 linewidth=2, edgecolor='blue', facecolor='none')
+        ax.add_patch(rect)
 
-# ==== CONFIG ====
-SRC_OK_DIR = "dataset_raw/ok"          # your source OK images
-DST_OK_DIR = "dataset_train/train/ok"  # where new crops will be saved (triplet training)
-FINAL_SIZE = 224
-CROPS_PER_IMAGE = 6
-VARIANCE_MIN = 12.0    # reject too-flat crops; lower -> keep more, higher -> keep fewer
-SEED = 42              # for reproducibility
-# =================
+    plt.gca().invert_yaxis()  # flip y-axis to image-like coordinates
+    plt.show()
 
-random.seed(SEED)
-np.random.seed(SEED)
-Path(DST_OK_DIR).mkdir(parents=True, exist_ok=True)
+def is_contained(small_box, large_box, tol=0.9):
+    # small_box, large_box: (x,y,w,h)
+    xi, yi, wi, hi = small_box
+    xo, yo, wo, ho = large_box
+    xi1 = xi+wi
+    yi1 = yi+hi
+    xo1 = xo+wo
+    yo1 = yo+ho
+    inter_x0 = max(xi, xo)
+    inter_y0 = max(yi, yo)
+    inter_x1 = min(xi1, xo1)
+    inter_y1 = min(yi1, yo1)
+    inter_area = max(0, inter_x1-inter_x0) * max(0, inter_y1-inter_y0)
+    return inter_area >= tol*(wi*hi)
 
-IMG_EXTS = {".jpg",".jpeg",".png",".bmp",".webp",".tif",".tiff"}
-
-def load_rgb(path: Path) -> Image.Image:
-    img = Image.open(path).convert("RGB")
-    return img
-
-def ensure_min_side(img: Image.Image, min_side: int) -> Image.Image:
-    """Upscale (if needed) so min(H, W) >= min_side; keeps aspect ratio."""
-    w, h = img.size
-    smin = min(w, h)
-    if smin >= min_side:
-        return img
-    scale = min_side / smin
-    new_w, new_h = int(round(w * scale)), int(round(h * scale))
-    return img.resize((new_w, new_h), Image.BICUBIC)
-
-def random_square_crop(img: Image.Image, side: int) -> Image.Image:
-    """Random 224x224 crop without stretching; assumes min side >= side."""
-    w, h = img.size
-    if w == side and h == side:
-        return img
-    x0 = random.randint(0, w - side)
-    y0 = random.randint(0, h - side)
-    return img.crop((x0, y0, x0 + side, y0 + side))
-
-def variance_ok(pil_img: Image.Image, thresh: float) -> bool:
-    arr = np.asarray(pil_img.convert("L"), dtype=np.float32)
-    return float(arr.var()) >= thresh
-
-def process_one(img_path: Path):
-    try:
-        img = load_rgb(img_path)
-    except Exception as e:
-        print(f"[skip] Cannot open {img_path}: {e}")
-        return
-
-    img = ensure_min_side(img, FINAL_SIZE)
-
-    made, tries = 0, 0
-    max_tries = CROPS_PER_IMAGE * 10  # plenty of chances to pass variance
-    while made < CROPS_PER_IMAGE and tries < max_tries:
-        tries += 1
-        crop = random_square_crop(img, FINAL_SIZE)
-        if not variance_ok(crop, VARIANCE_MIN):
-            continue
-        out_name = f"{img_path.stem}_crop{made+1}.jpg"
-        out_path = Path(DST_OK_DIR) / out_name
-        crop.save(out_path, quality=95)
-        made += 1
-
-    if made < CROPS_PER_IMAGE:
-        print(f"[warn] {img_path.name}: created {made}/{CROPS_PER_IMAGE} crops (variance filter may be strict)")
+def remove_nested_boxes(boxes, tolerance=0.9):   
+    """Remove boxes that are fully or mostly contained within another box."""
+    # first sort boxes by area
+    boxes = sorted(boxes, key=lambda b: b[2]*b[3])
+    keep = []
+    # loop through boxes, smallest to largest
+    for i, box in enumerate(boxes):
+        drop = False
+        # Compare smallest box to all larger boxes
+        for j in range(i+1, len(boxes)):
+            # if box[i] is contained at least in one of the larger boxes, drop it
+            if is_contained(boxes[i], boxes[j], tol=tolerance):
+                drop = True
+                break
+        if not drop:
+            keep.append(box)
+        
+    return keep
 
 def main():
-    srcs = [p for p in Path(SRC_OK_DIR).glob("**/*") if p.suffix.lower() in IMG_EXTS]
-    if not srcs:
-        print(f"[err] No images found under {SRC_OK_DIR}")
-        return
-
-    print(f"[info] Found {len(srcs)} OK images. Writing crops to: {DST_OK_DIR}")
-    for p in srcs:
-        process_one(p)
-    print("[done] OK random crops generated.")
+    boxes = [(10,10,20,20), (12,12,5,5), (15,15,10,10), (50,50,20,20), (55,55,5,5)]
+    print("Original boxes:", boxes)
+    filtered_boxes = remove_nested_boxes(boxes, tolerance=0.9)
+    print("Filtered boxes:", filtered_boxes)
+    draw_boxes(boxes, "Original Boxes")
+    draw_boxes(filtered_boxes, "Filtered Boxes")
 
 if __name__ == "__main__":
     main()

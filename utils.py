@@ -125,12 +125,11 @@ def is_contained(small_box, large_box, tol=0.9):
     inter_area = max(0, inter_x1-inter_x0) * max(0, inter_y1-inter_y0)
     return inter_area >= tol*(wi*hi)
 
-def remove_nested_boxes(boxes, tolerance=0.7):   
+def remove_nested_boxes(boxes, tolerance=0.9):   
     """Remove boxes that are fully or mostly contained within another box."""
     # first sort boxes by area
     boxes = sorted(boxes, key=lambda b: b[2]*b[3])
     keep = []
-    boxes_to_drop=[]
     # loop through boxes, smallest to largest
     for i, box in enumerate(boxes):
         drop = False

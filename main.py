@@ -214,16 +214,15 @@ def crop_images(loss_map, loader, mean, std, cfg, out):
                 indices = indices.flatten()
                 boxes = [boxes[i] for i in indices]
 
-            # --- merge touching/near boxes, then (optionally) expand ---
-            boxes = remove_nested_boxes(boxes, tolerance=0.7)
-            boxes = expand_boxes(boxes, H, W, expand_ratio=cfg["box"]["expand"])  # 5% padding; set 0.0 to disable
+            finale_boxes = remove_nested_boxes(boxes, tolerance=0.7)
+            finale_boxes = expand_boxes(finale_boxes, H, W, expand_ratio=cfg["box"]["expand"])  # 5% padding; set 0.0 to disable
             
-            boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
+            boxes_vis = draw_boxes(overlay, finale_boxes, color=(0, 0, 255), thickness=2)
 
             stem = Path(p).stem
             defect = Path(p).parent.name
 
-            for bi, (x,y,w,h) in enumerate(boxes):
+            for bi, (x,y,w,h) in enumerate(finale_boxes):
                 x0, y0, x1, y1 = pad_box(x,y,w,h,H,W,pad_ratio=0.05)
                 crop = img[y0:y1, x0:x1]
                 cv2.imwrite(os.path.join(out["crops"], f"{defect}_{stem}_box{bi}.png"), crop)
