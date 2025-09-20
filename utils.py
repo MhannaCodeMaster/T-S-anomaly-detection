@@ -121,19 +121,19 @@ def is_contained(inner, outer, tol=0.9):
     inter_area = max(0, inter_x1-inter_x0) * max(0, inter_y1-inter_y0)
     return inter_area >= tol*(wi*hi)
 
-def merge_boxes(boxes, tolerance=0.7):   
+def remove_nested_boxes(boxes, tolerance=0.7):   
     if not boxes:
         return []
     keep = []
     for i, box in enumerate(boxes):
-        contained = False
+        drop = False
         for j, box_j in enumerate(keep):
             if i == j:
                 continue
             if is_contained(box, box_j, tolerance) or is_contained(box_j, box, tolerance):
-                contained = True
+                drop = True
                 break
-        if not contained:
+        if not drop:
             keep.append(box)
     return keep
 

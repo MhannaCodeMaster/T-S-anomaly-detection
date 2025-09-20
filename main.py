@@ -215,7 +215,7 @@ def crop_images(loss_map, loader, mean, std, cfg, out):
                 boxes = [boxes[i] for i in indices]
 
             # --- merge touching/near boxes, then (optionally) expand ---
-            boxes = merge_boxes(boxes)
+            boxes = remove_nested_boxes(boxes, tolerance=0.7)
             boxes = expand_boxes(boxes, H, W, expand_ratio=cfg["box"]["expand"])  # 5% padding; set 0.0 to disable
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
