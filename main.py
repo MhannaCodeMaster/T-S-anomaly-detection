@@ -21,84 +21,89 @@ from conf.config import *
 from utils import *
 
 def main():
-    cfg = get_config()
-    out = resolve_paths(cfg)
-    
-    np.random.seed(0)
-    torch.manual_seed(0)
-    
-    transform = transforms.Compose([
-        transforms.Resize([256, 256]),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
+    try:
+        cfg = get_config()
+        out = resolve_paths(cfg)
+        save_config(cfg, out['base'])
+        
+        np.random.seed(0)
+        torch.manual_seed(0)
+        
+        transform = transforms.Compose([
+            transforms.Resize([256, 256]),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
 
-    if cfg["mode"] == "train":
-        print("Training on category: ", cfg["dataset"]["category"])
-        train_loader, val_loader, test_loader = load_train_datasets(transform, cfg)
-    elif cfg["mode"] == "test":
-        print("Testing on category: ", cfg["dataset"]["category"])
-        test_neg_image_list = sorted(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', 'good', '*.png')))
-        test_pos_image_list = set(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', '*', '*.png'))) - set(test_neg_image_list)
-        test_pos_image_list = sorted(list(test_pos_image_list))
-        test_neg_dataset = MVTecDataset(test_neg_image_list, transform=transform)
-        test_pos_dataset = MVTecDataset(test_pos_image_list, transform=transform)
-        test_neg_loader = DataLoader(test_neg_dataset, batch_size=1, shuffle=False, drop_last=False)
-        test_pos_loader = DataLoader(test_pos_dataset, batch_size=1, shuffle=False, drop_last=False)
+        if cfg["mode"] == "train":
+            print("Training on category: ", cfg["dataset"]["category"])
+            train_loader, val_loader, test_loader = load_train_datasets(transform, cfg)
+        elif cfg["mode"] == "test":
+            print("Testing on category: ", cfg["dataset"]["category"])
+            test_neg_image_list = sorted(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', 'good', '*.png')))
+            test_pos_image_list = set(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', '*', '*.png'))) - set(test_neg_image_list)
+            test_pos_image_list = sorted(list(test_pos_image_list))
+            test_neg_dataset = MVTecDataset(test_neg_image_list, transform=transform)
+            test_pos_dataset = MVTecDataset(test_pos_image_list, transform=transform)
+            test_neg_loader = DataLoader(test_neg_dataset, batch_size=1, shuffle=False, drop_last=False)
+            test_pos_loader = DataLoader(test_pos_dataset, batch_size=1, shuffle=False, drop_last=False)
 
-    teacher = ResNet18_MS3(pretrained=True)
-    student = ResNet18_MS3(pretrained=False)
-    teacher.cuda()
-    student.cuda()
+        teacher = ResNet18_MS3(pretrained=True)
+        student = ResNet18_MS3(pretrained=False)
+        teacher.cuda()
+        student.cuda()
 
-    if cfg["mode"] == "train":        
-        if cfg["models"]["st_path"]:
-            try:
-                print('loading model ' + cfg['models']['st_path'])
-                saved_dict = torch.load(cfg["models"]["st_path"])
-                student.load_state_dict(saved_dict['state_dict'])
-                best_student = copy.deepcopy(student)
-            except Exception as e:
-                print(f"Error loading student model from {cfg['models']['st_path']}: {e}")
-                exit(1)
-        else:
-            best_student = train_val_student(teacher, student, train_loader, val_loader, cfg, out)
-            
-        test_err_map = get_error_map(teacher, best_student, test_loader)
-        if cfg["models"]["calibration"]:
-            mean, std = load_calibration_stats(cfg["models"]["calibration"])
-        else:
-            mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda")
-        crop_images(test_err_map, test_loader, mean, std, cfg, out)
-        # triplet_learning(args)
-    # elif args.mode == 'test':
-    #     saved_dict = torch.load(args.checkpoint)
-    #     category = args.category
-    #     gt = load_ground_truth(args.mvtec_ad, category)
+        if cfg["mode"] == "train":        
+            if cfg["models"]["st_path"]:
+                try:
+                    print('loading model ' + cfg['models']['st_path'])
+                    saved_dict = torch.load(cfg["models"]["st_path"])
+                    student.load_state_dict(saved_dict['state_dict'])
+                    best_student = copy.deepcopy(student)
+                except Exception as e:
+                    print(f"Error loading student model from {cfg['models']['st_path']}: {e}")
+                    raise
+            else:
+                best_student = train_val_student(teacher, student, train_loader, val_loader, cfg, out)
+                
+            test_err_map = get_error_map(teacher, best_student, test_loader)
+            if cfg["models"]["calibration"]:
+                mean, std = load_calibration_stats(cfg["models"]["calibration"])
+            else:
+                mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda")
+            crop_images(test_err_map, test_loader, mean, std, cfg, out)
+            # triplet_learning(args)
+        # elif args.mode == 'test':
+        #     saved_dict = torch.load(args.checkpoint)
+        #     category = args.category
+        #     gt = load_ground_truth(args.mvtec_ad, category)
 
-    #     print('load ' + args.checkpoint)
-    #     student.load_state_dict(saved_dict['state_dict'])
+        #     print('load ' + args.checkpoint)
+        #     student.load_state_dict(saved_dict['state_dict'])
 
-    #     pos = get_error_map(teacher, student, test_pos_loader)
-    #     neg = get_error_map(teacher, student, test_neg_loader)
+        #     pos = get_error_map(teacher, student, test_pos_loader)
+        #     neg = get_error_map(teacher, student, test_neg_loader)
 
-    #     scores = []
-    #     for i in range(len(pos)):
-    #         temp = cv2.resize(pos[i], (256, 256))
-    #         scores.append(temp)
-    #     for i in range(len(neg)):
-    #         temp = cv2.resize(neg[i], (256, 256))
-    #         scores.append(temp)
+        #     scores = []
+        #     for i in range(len(pos)):
+        #         temp = cv2.resize(pos[i], (256, 256))
+        #         scores.append(temp)
+        #     for i in range(len(neg)):
+        #         temp = cv2.resize(neg[i], (256, 256))
+        #         scores.append(temp)
 
-    #     scores = np.stack(scores)
-    #     neg_gt = np.zeros((len(neg), 256, 256), dtype=np.bool)
-    #     gt_pixel = np.concatenate((gt, neg_gt), 0)
-    #     gt_image = np.concatenate((np.ones(pos.shape[0], dtype=np.bool), np.zeros(neg.shape[0], dtype=np.bool)), 0)        
+        #     scores = np.stack(scores)
+        #     neg_gt = np.zeros((len(neg), 256, 256), dtype=np.bool)
+        #     gt_pixel = np.concatenate((gt, neg_gt), 0)
+        #     gt_image = np.concatenate((np.ones(pos.shape[0], dtype=np.bool), np.zeros(neg.shape[0], dtype=np.bool)), 0)        
 
-    #     pro = evaluate(gt_pixel, scores, metric='pro')
-    #     auc_pixel = evaluate(gt_pixel.flatten(), scores.flatten(), metric='roc')
-    #     auc_image_max = evaluate(gt_image, scores.max(-1).max(-1), metric='roc')
-    #     print('Catergory: {:s}\tPixel-AUC: {:.6f}\tImage-AUC: {:.6f}\tPRO: {:.6f}'.format(category, auc_pixel, auc_image_max, pro))
+        #     pro = evaluate(gt_pixel, scores, metric='pro')
+        #     auc_pixel = evaluate(gt_pixel.flatten(), scores.flatten(), metric='roc')
+        #     auc_image_max = evaluate(gt_image, scores.max(-1).max(-1), metric='roc')
+        #     print('Catergory: {:s}\tPixel-AUC: {:.6f}\tImage-AUC: {:.6f}\tPRO: {:.6f}'.format(category, auc_pixel, auc_image_max, pro))
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        raise
    
 def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
     print("Student training started...")
@@ -291,6 +296,15 @@ def load_calibration_stats(cali_path):
         return mean, std
     except Exception as e:
         print(f"Error loading calibration stats from {cali_path}: {e}")
+        exit(1)
+
+def save_config(cfg, path):
+    config_save_path = os.path.join(path, "config.yaml")
+    try:
+        with open(config_save_path, 'w') as file:
+            yaml.dump(cfg, file)
+    except Exception as e:
+        print(f"Error saving configuration to {config_save_path}: {e}")
         exit(1)
 
 if __name__ == "__main__":
