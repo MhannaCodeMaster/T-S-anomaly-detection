@@ -168,20 +168,19 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
             best_student = copy.deepcopy(student)
         print(f"Epoch: [{epoch+1}/{cfg['student_training']['epochs']}] - Avg training loss: {avg_train_loss:.6f} - Validation loss: {err_mean.item():.7f}",end="\r")
         
-    print("Student training completed.")
+    print("\nStudent training completed.")
     return best_student
 
 def crop_images(loss_map, loader, mean, std, cfg, out):
-    print("Starting cropping images...",end='\n')    
+    print("Starting cropping images...",end='\n')  
+    total = len(loader.dataset)
+    print(f"images processed: [0/{total}]",end="\r")
     idx = 0
     for batch in loader:
         img_paths, _ = batch
         
         bs = len(img_paths)
         hm_batch = loss_map[idx: idx + bs]
-        idx += bs
-        
-        print(f"image processed: [0/{len(img_paths)}]",end="\r")
         for k, p in enumerate(img_paths):
             hm64 = hm_batch[k]
             img = cv2.imread(p)
@@ -233,9 +232,10 @@ def crop_images(loss_map, loader, mean, std, cfg, out):
             cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_overlay.png"), overlay)
             cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_mask.png"), mask)
             cv2.imwrite(os.path.join(out["images"], f"{defect}_{stem}_boxes.png"), boxes_vis)
-            print(f"image processed: [{k+1}/{len(img_paths)}]",end="\r")
+            print(f"images processed: [{idx + k + 1}/{total}]", end="\r")
+        idx += bs
                    
-    print("Cropping images completed.",end="\n")
+    print("\nCropping images completed.",end="\n")
 
 def triplet_learning(cfg):
     print("Starting triplet learning...")
