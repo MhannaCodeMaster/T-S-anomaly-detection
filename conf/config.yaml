@@ -22,7 +22,7 @@ models:
   calibration: null
 
 box: 
-  expand: 0.5
+  expand: 0.05
   min_area: 600
 
 nms:
