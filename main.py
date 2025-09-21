@@ -253,7 +253,7 @@ def train_triplet(model , train_loader, val_loader, cfg, out):
     MARGIN = float(cfg["triplet"]["margin"])
     LR = float(cfg["triplet"]["lr"])
     WGT_DECAY = float(cfg["triplet"]["weight_decay"])
-    TRIPLETPATH = out["base"]["triplet"]
+    TRIPLETPATH = out["triplet"]
     
     model.train()
     min_err = 10000 # Stores the best validation error so far.
