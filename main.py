@@ -127,7 +127,7 @@ def train_student(teacher, student, train_loader, val_loader, cfg, out):
     # Using SGD optimizer for training the student model
     optimizer = torch.optim.SGD(student.parameters(), lr=LR, momentum=MOMENTUM, weight_decay=WGT_DECAY)
     # Main training loop
-    print(f"Epoch: 0/{EPOCHS}",end="\r")
+
     for epoch in range(EPOCHS):
         student.train()
         running_loss = 0.0
