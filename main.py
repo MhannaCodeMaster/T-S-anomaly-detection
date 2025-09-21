@@ -56,13 +56,13 @@ def main():
                 mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda")
             elif cfg["student"]["checkpoint"]: # Load student model from checkpoint
                 try:
-                    print('loading model ' + cfg['models']['st_path'])
-                    saved_dict = torch.load(cfg["models"]["st_path"])
+                    print('loading model ' + cfg['student']['checkpoint'])
+                    saved_dict = torch.load(cfg["student"]["checkpoint"])
                     student.load_state_dict(saved_dict['state_dict'])
                     student.cuda()
-                    mean, std = load_calibration_stats(cfg["models"]["calibration"])
+                    mean, std = load_calibration_stats(cfg["student"]["calibration"])
                 except Exception as e:
-                    print(f"Error loading student model from {cfg['models']['st_path']}: {e}")
+                    print(f"Error loading student model from {cfg['student']['calibration']}: {e}")
                     raise
             else:
                 print("Error: No student training or checkpoint provided.")
