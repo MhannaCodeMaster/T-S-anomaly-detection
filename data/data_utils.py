@@ -70,7 +70,7 @@ def load_tl_datasets(cfg, out):
     train_ok_df = ok_df[ok_df['parent_id'].isin(train_parents)]
     train_notok_df = notok_df[notok_df['parent_id'].isin(train_parents)]
     val_ok_df = ok_df[ok_df['parent_id'].isin(val_parents)]
-    val_notok_df = notok_df[notok_df['base_ok_filename'].isin(val_parents)]
+    val_notok_df = notok_df[notok_df['parent_id'].isin(val_parents)]
     print("Train OK:", len(train_ok_df), "Train NOT_OK:", len(train_notok_df))
     print("Val   OK:", len(val_ok_df),   "Val   NOT_OK:", len(val_notok_df))
     
