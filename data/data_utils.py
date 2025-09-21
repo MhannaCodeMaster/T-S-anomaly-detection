@@ -42,8 +42,8 @@ def load_tl_datasets(cfg, out):
     VAL_PERC = 0.2
     
     print("Reading manifests...")
-    ok_df = pd.read_csv(cfg["datasets"]["ok_manifest"])
-    notok_df = pd.read_csv(cfg["datasets"]["notok_manifest"])
+    ok_df = pd.read_csv(cfg["dataset"]["ok_manifest"])
+    notok_df = pd.read_csv(cfg["dataset"]["notok_manifest"])
     
     # We need to group the patches by their source image
     parents = set(ok_df['parent_id']).union(set(notok_df['base_ok_filename']))
