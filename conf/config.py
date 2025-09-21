@@ -43,12 +43,12 @@ def load_args():
     
     #----- Optional args -----#
     p.add_argument("--dataset.category", required=False, type=str, help="Dataset category (e.g., cable, hazelnut)")
-    p.add_argument("--student.train", type=bool, required=False, help="Train stdudent model")
+    p.add_argument("--student.train", type=str, required=False, help="Train stdudent model")
     p.add_argument("--student.checkpoint", type=str, required=False, help="Stdudent model checkpoint path")
     p.add_argument("--student.calibration", type=str, required=False, help="Calibration path")
     p.add_argument("--student.epochs", type=int, required=False, help="Number of student training epochs")
     p.add_argument("--student.batch_size", type=int, required=False, help="Batch size for student training")
-    p.add_argument("--triplet.train", type=bool, required=False, help="Train triplet model")
+    p.add_argument("--triplet.train", type=str, required=False, help="Train triplet model")
     p.add_argument("--triplet.checkpoint", type=str, required=False, help="Triplet model checkpoint path")
     p.add_argument("--triplet.epochs", type=int, required=False, help="Number of triplet training epochs")
     p.add_argument("--triplet.batch_size", type=int, required=False, help="Batch size for triplet training")
