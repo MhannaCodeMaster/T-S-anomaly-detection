@@ -1,1 +1,1 @@
-# Enhancing Teacher-Student Learning with Region Proposal Networks and Contrastive Triplet Learning for Unsupervised Anomaly Detection and Localization
+# Enhancing Teacher-Student Learning as Region Proposal Network with Contrastive Triplet Learning for Unsupervised Anomaly Detection
