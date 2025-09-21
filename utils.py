@@ -316,10 +316,8 @@ def mine_batch_hard(emb, labels, margin):
             continue  # skip if we can't form a triplet
 
         # ---- STEP 3: Choose the positive ----
-        # Strategy: pick the "hardest" positive,
-        # i.e. the one farthest away from the anchor in cosine distance.
-        # This makes training more effective than picking an easy positive.
-        pj = pos[torch.argmax(dist[i, pos])]
+        # pj = pos[torch.argmax(dist[i, pos])]
+        pj = pos[torch.argmin(dist[i, pos])]  
 
         # ---- STEP 4: Choose the negative ----
         # Prefer "semi-hard" negatives if possible:
@@ -327,14 +325,15 @@ def mine_batch_hard(emb, labels, margin):
         # - But not *too* far (still within the margin band).
         band = (dist[i, neg] > dist[i, pj]) & (dist[i, neg] < dist[i, pj] + margin)
 
-        if torch.any(band):
-            # If we found semi-hard negatives, pick one randomly
-            cand = neg[band]
-            nj   = cand[torch.randint(len(cand), (1,)).item()]
-        else:
-            # Otherwise, fallback: pick the *hardest* negative,
-            # i.e. the one closest to the anchor (minimum distance).
-            nj = neg[torch.argmin(dist[i, neg])]
+        # if torch.any(band):
+        #     # If we found semi-hard negatives, pick one randomly
+        #     cand = neg[band]
+        #     nj   = cand[torch.randint(len(cand), (1,)).item()]
+        # else:
+        #     # Otherwise, fallback: pick the *hardest* negative,
+        #     # i.e. the one closest to the anchor (minimum distance).
+        #     nj = neg[torch.argmin(dist[i, neg])]
+        nj = neg[torch.argmin(dist[i, neg])]  # batch-hard negative
 
         # ---- STEP 5: Store the triplet indices ----
         a_idx.append(i)
