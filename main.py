@@ -252,7 +252,7 @@ def train_triplet(model , train_loader, val_loader, cfg, out):
     TOTAL_EPOCHS = int(cfg["triplet"]["epochs"])
     MARGIN = float(cfg["triplet"]["margin"])
     LR = float(cfg["triplet"]["lr"])
-    WGT_DECAY = float(["triplet"]["weight_decay"])
+    WGT_DECAY = float(cfg["triplet"]["weight_decay"])
     TRIPLETPATH = out["base"]["triplet"]
     
     model.train()
