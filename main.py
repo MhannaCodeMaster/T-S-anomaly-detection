@@ -46,7 +46,7 @@ def main():
             student = ResNet18_MS3(pretrained=False)
             mean, std = 0.0, 0.0
             
-            if cfg["student"]["train"] == True:
+            if cfg["student"]["train"] == "true":
                 teacher = ResNet18_MS3(pretrained=True)
                 teacher.cuda()
                 student.cuda()
@@ -68,7 +68,7 @@ def main():
                 print("Error: No student training or checkpoint provided.")
                 return
             
-            if cfg["triplet"]["train"] == True:
+            if cfg["triplet"]["train"] == "true":
                 triplet = TripletEmbedder(pretrained=True)
                 triplet.cuda()
                 train_loader, val_loader = load_tl_datasets(cfg, out)
