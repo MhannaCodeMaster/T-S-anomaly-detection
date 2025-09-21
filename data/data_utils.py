@@ -60,8 +60,8 @@ def load_tl_datasets(cfg, out):
     train_parents_df = pd.DataFrame({"parent_id": list(train_parents)})
     val_parents_df   = pd.DataFrame({"parent_id": list(val_parents)})
 
-    train_parents_df.to_csv(os.path.join(out['base']['crops'], "train_parents.csv"), index=False)
-    val_parents_df.to_csv(os.path.join(out['base']['crops'],"val_parents.csv"), index=False)
+    train_parents_df.to_csv(os.path.join(out['crops'], "train_parents.csv"), index=False)
+    val_parents_df.to_csv(os.path.join(out['crops'],"val_parents.csv"), index=False)
     
     print("Train parents:", len(train_parents))
     print("Val parents:", len(val_parents))
