@@ -14,7 +14,7 @@ student:
   batch_size: 32
   lr: 0.4
   momentum: 0.9
-  weight_decay: 0.0004
+  weight_decay: 1e-4
   checkpoint: null
   calibration: null
 
@@ -23,7 +23,7 @@ triplet:
   epochs: 100
   batch_size: 32
   lr: 0.001
-  weight_decay: 0.0004
+  weight_decay: 1e-4
   margin: 1.0
   checkpoint: null
 
