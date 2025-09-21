@@ -298,7 +298,6 @@ def train_triplet(model , train_loader, val_loader, cfg, out):
         
         sched.step()
         avg_loss = total_loss / max(1, contrib_batches)
-        print(f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] - train_loss={avg_loss:.4f} | triplets={total_triplets}")
         # ---- Training END ----
         
         # ---- Validation (no grad) START ----
@@ -323,7 +322,6 @@ def train_triplet(model , train_loader, val_loader, cfg, out):
 
         # average over number of *batches that produced triplets*
         val_avg_loss = val_total_loss / max(1, val_contrib_batches)
-        print(f"val_loss={val_avg_loss:.4f} | val_triplets={val_total_triplets}")
         # ---- Validation END ----
         
         # ---- Save best model ----
@@ -335,7 +333,7 @@ def train_triplet(model , train_loader, val_loader, cfg, out):
             }
             torch.save(best_model, os.path.join(TRIPLETPATH, 'triplet_best.pth'))
             
-        print(f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] - train_loss={avg_loss:.4f} - triplets={total_triplets} - val_loss={val_avg_loss:.4f} - triplets={val_total_triplets}", end='\r')
+        print(f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] - train_loss={avg_loss:.4f} - train_triplets={total_triplets} - val_loss={val_avg_loss:.4f} - val_triplets={val_total_triplets}", end='\r')
 
     print("Triplet learning completed.")
 

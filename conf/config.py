@@ -52,6 +52,7 @@ def load_args():
     p.add_argument("--triplet.checkpoint", type=str, required=False, help="Triplet model checkpoint path")
     p.add_argument("--triplet.epochs", type=int, required=False, help="Number of triplet training epochs")
     p.add_argument("--triplet.batch_size", type=int, required=False, help="Batch size for triplet training")
+    p.add_argument("--triplet.margin", type=float, required=False, help="Margin for triplet training")
     p.add_argument("--heatmap_threshold.method", type=int, required=False,choices=["percentile", "otsu"], help="Heatmap thresholding method")
     p.add_argument("--heatmap_threshold.value", type=float, required=False, help="Heatmap threshold value if method percentile")
     p.add_argument("--models.st_path", type=str, required=False, help="Path to student model checkpoint")

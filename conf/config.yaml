@@ -24,7 +24,7 @@ triplet:
   batch_size: 32
   lr: 0.001
   weight_decay: 1e-4
-  margin: 1.0
+  margin: 0.3
   checkpoint: null
 
 heatmap_threshold:
