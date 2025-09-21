@@ -37,7 +37,7 @@ def load_args():
     p.add_argument("--mode", type=str, required=True, choices=["train", "test"], default="train", help="Operation mode: train or test")
     p.add_argument("--config", type=str, required=True, default="conf/config.yaml", help="Path to config file")
     p.add_argument("--dataset.mvtec", required=True, type=str, help="Path to mvtec dataset root directory")
-    p.add_argument("--dataset.ok_crops", required=True, type=str, help="Path to ok crops directory")
+    p.add_argument("--dataset.crops_root", required=True, type=str, help="Path to the crops directory")
     p.add_argument("--dataset.ok_manifest", required=True, type=str, help="Path to ok crops manifest file")
     p.add_argument("--dataset.notok_manifest", required=True, type=str, help="Path to not ok crops manifest file")
     

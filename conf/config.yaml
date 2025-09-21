@@ -3,8 +3,7 @@ mode: train
 dataset:
   mvtec_path: /kaggle/input/mvtec-ad
   mvtec_category: cable
-  ok_crops: /kaggle/input/patches/crops/ok
-  notok_crops: /kaggle/input/patches/crops/not_ok
+  crops_root: /kaggle/input/patches
   ok_manifest: /kaggle/input/patches/crops/ok_manifest.csv
   notok_manifest: /kaggle/input/patches/crops/notok_manifest.csv
   

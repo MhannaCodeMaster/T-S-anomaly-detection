@@ -2,6 +2,7 @@ from torchvision import transforms
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
+from pathlib import Path
 
 class MVTecDataset(object):
     def __init__(self, image_list, transform=None):
@@ -22,8 +23,8 @@ class MVTecDataset(object):
         return self.image_list[idx], image
 
 class PatchDataset(Dataset):
-    def __init__(self, df, tf, label: str):
-        self.paths = df["patch_path"].tolist()
+    def __init__(self, df, tf, label: str, crops_root):
+        self.paths =[str(Path(crops_root) / p) for p in df["patch_path"].tolist()]
         self.parent_ids = df["parent_id"].tolist()
         self.label = 0 if label == "ok" else 1
         self.tf = tf

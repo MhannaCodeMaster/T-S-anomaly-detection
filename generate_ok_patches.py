@@ -7,8 +7,8 @@ import numpy as np
 
 # ==== CONFIG ====
 SRC_OK_DIR = "/kaggle/input/mvtec-ad/cable/train/good"      # source OK images
-DST_OK_DIR = "/kaggle/working/train/ok"                     # where crops are saved
-MANIFEST_CSV = "/kaggle/working/train/ok_manifest.csv"      # metadata for all crops
+DST_OK_DIR = "/kaggle/working/crops/ok"                     # where crops are saved
+MANIFEST_CSV = "/kaggle/working/crops/ok_manifest.csv"      # metadata for all crops
 FINAL_SIZE = 224
 CROPS_PER_IMAGE = 6
 VARIANCE_MIN = 12.0   # reject too-flat crops; lower -> keep more, higher -> keep fewer

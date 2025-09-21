@@ -89,10 +89,10 @@ def load_tl_datasets(cfg, out):
     ])
     
     # Building the datasets
-    train_ok_ds    = PatchDataset(train_ok_df, train_tf, "ok")
-    train_notok_ds = PatchDataset(train_notok_df, train_tf, "not_ok")
-    val_ok_ds      = PatchDataset(val_ok_df, val_tf, "ok")
-    val_notok_ds   = PatchDataset(val_notok_df, val_tf, "not_ok")
+    train_ok_ds    = PatchDataset(train_ok_df, train_tf, "ok", crops_root=cfg['dataset']['crops_root'])
+    train_notok_ds = PatchDataset(train_notok_df, train_tf, "not_ok", crops_root=cfg['dataset']['crops_root'])
+    val_ok_ds      = PatchDataset(val_ok_df, val_tf, "ok", crops_root=cfg['dataset']['crops_root'])
+    val_notok_ds   = PatchDataset(val_notok_df, val_tf, "not_ok", crops_root=cfg['dataset']['crops_root'])
     
     train_dataset = torch.utils.data.ConcatDataset([train_ok_ds, train_notok_ds])
     val_dataset   = torch.utils.data.ConcatDataset([val_ok_ds, val_notok_ds])
