@@ -46,7 +46,7 @@ def load_tl_datasets(cfg, out):
     notok_df = pd.read_csv(cfg["dataset"]["notok_manifest"])
     
     # We need to group the patches by their source image
-    parents = set(ok_df['parent_id']).union(set(notok_df['base_ok_filename']))
+    parents = set(ok_df['parent_id']).union(set(notok_df['parent_id']))
     parents = sorted(parents)
     print(f"Total of parent images: {len(parents)}")
     
@@ -68,7 +68,7 @@ def load_tl_datasets(cfg, out):
     
     # Train/Val splits
     train_ok_df = ok_df[ok_df['parent_id'].isin(train_parents)]
-    train_notok_df = notok_df[notok_df['base_ok_filename'].isin(train_parents)]
+    train_notok_df = notok_df[notok_df['parent_id'].isin(train_parents)]
     val_ok_df = ok_df[ok_df['parent_id'].isin(val_parents)]
     val_notok_df = notok_df[notok_df['base_ok_filename'].isin(val_parents)]
     print("Train OK:", len(train_ok_df), "Train NOT_OK:", len(train_notok_df))
