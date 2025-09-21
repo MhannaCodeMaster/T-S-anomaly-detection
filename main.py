@@ -114,6 +114,10 @@ def main():
 
 def train_student(teacher, student, train_loader, val_loader, cfg, out):
     print("Student training started...")
+    LR = float(cfg['student']['lr'])
+    MOMENTUM = float(cfg['student']['momentum'])
+    WGT_DECAY = float(cfg['student']['weight_decay'])
+    EPOCHS = int(cfg['student']['epochs'])
     min_err = 10000 # Stores the best validation error so far.
     teacher.eval()  # Teacher model is forzen
     student.train() # Student model is set to training mode
@@ -121,10 +125,10 @@ def train_student(teacher, student, train_loader, val_loader, cfg, out):
     best_student = None
     
     # Using SGD optimizer for training the student model
-    optimizer = torch.optim.SGD(student.parameters(), lr=cfg['student']['lr'], momentum=cfg['student']['momentum'], weight_decay=cfg['student']['weight_decay'])
+    optimizer = torch.optim.SGD(student.parameters(), lr=LR, momentum=MOMENTUM, weight_decay=WGT_DECAY)
     # Main training loop
-    print(f"Epoch: 0/{cfg['student']['epochs']}",end="\r")
-    for epoch in range(cfg["student"]["epochs"]):
+    print(f"Epoch: 0/{EPOCHS}",end="\r")
+    for epoch in range(EPOCHS):
         student.train()
         running_loss = 0.0
         num_batches = 0
@@ -148,7 +152,6 @@ def train_student(teacher, student, train_loader, val_loader, cfg, out):
                 # The loss = average squared distance between the teacher and student features, summed over feature levels.
                 loss += torch.sum((t_feat[i] - s_feat[i]) ** 2, 1).mean()
 
-            print("[%d/%d] loss: %f" % (epoch, cfg['student']['epochs'], loss.item()))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -246,10 +249,10 @@ def crop_images(loss_map, loader, mean, std, cfg, out):
 def train_triplet(model , train_loader, val_loader, cfg, out):
     print("Starting triplet learning...")
     CATEGORY = cfg["dataset"]["category"]
-    TOTAL_EPOCHS = cfg["triplet"]["epochs"]
-    MARGIN = cfg["triplet"]["margin"]
-    LR = cfg["triplet"]["lr"]
-    WGT_DECAY = cfg["triplet"]["weight_decay"]
+    TOTAL_EPOCHS = int(cfg["triplet"]["epochs"])
+    MARGIN = float(cfg["triplet"]["margin"])
+    LR = float(cfg["triplet"]["lr"])
+    WGT_DECAY = float(["triplet"]["weight_decay"])
     TRIPLETPATH = out["base"]["triplet"]
     
     model.train()
