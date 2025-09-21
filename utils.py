@@ -278,3 +278,69 @@ def compute_train_calibration_stats(teacher, student, train_loader, cfg, out, de
     np.savez(file_path, mean=float(mean), std=float(std))
     print(f"[calib] saved μ={mean:.6g}, σ={std:.6g}")
     return mean, std
+
+
+@torch.no_grad()
+def mine_batch_hard(emb, labels, margin):
+    """
+    emb:    [B, D] tensor of embeddings (batch size B, embedding dim D).
+    labels: [B] tensor of class labels (0 = ok, 1 = not_ok).
+    margin: triplet margin hyperparameter.
+
+    Returns three lists of indices (a_idx, p_idx, n_idx) so you can index into emb:
+        emb[a_idx], emb[p_idx], emb[n_idx]
+    """
+
+    # ---- STEP 1: Normalize embeddings ----
+    # Cosine similarity only makes sense if vectors are normalized.
+    emb = F.normalize(emb, p=2, dim=1)
+
+    # Cosine similarity matrix: sim[i,j] = cos_sim(emb[i], emb[j])
+    sim  = emb @ emb.t()   # [B,B]
+
+    # Convert similarity into distance:
+    # cos_dist = 1 - cos_sim (0 = identical, 2 = opposite).
+    dist = 1.0 - sim       # [B,B]
+
+    # Lists to hold the triplet indices
+    a_idx, p_idx, n_idx = [], [], []
+
+    # ---- STEP 2: Loop over every sample as anchor ----
+    for i in range(len(emb)):
+        # Identify same-class samples (positives) and different-class samples (negatives)
+        same = (labels == labels[i])    # Boolean mask of positives
+        diff = ~same                    # Boolean mask of negatives
+        same[i] = False                 # Exclude the anchor itself from positives
+
+        pos = torch.where(same)[0]      # indices of positives
+        neg = torch.where(diff)[0]      # indices of negatives
+        if len(pos) == 0 or len(neg) == 0:
+            continue  # skip if we can't form a triplet
+
+        # ---- STEP 3: Choose the positive ----
+        # Strategy: pick the "hardest" positive,
+        # i.e. the one farthest away from the anchor in cosine distance.
+        # This makes training more effective than picking an easy positive.
+        pj = pos[torch.argmax(dist[i, pos])]
+
+        # ---- STEP 4: Choose the negative ----
+        # Prefer "semi-hard" negatives if possible:
+        # - They are further away than the positive (harder),
+        # - But not *too* far (still within the margin band).
+        band = (dist[i, neg] > dist[i, pj]) & (dist[i, neg] < dist[i, pj] + margin)
+
+        if torch.any(band):
+            # If we found semi-hard negatives, pick one randomly
+            cand = neg[band]
+            nj   = cand[torch.randint(len(cand), (1,)).item()]
+        else:
+            # Otherwise, fallback: pick the *hardest* negative,
+            # i.e. the one closest to the anchor (minimum distance).
+            nj = neg[torch.argmin(dist[i, neg])]
+
+        # ---- STEP 5: Store the triplet indices ----
+        a_idx.append(i)
+        p_idx.append(pj.item())
+        n_idx.append(nj.item())
+
+    return a_idx, p_idx, n_idx

@@ -13,8 +13,9 @@ from sklearn.model_selection import train_test_split
 from glob import glob
 
 from models.teacher import ResNet18_MS3
-from data.mvtec_dataset import MVTecDataset
-from data.data_utils import load_ground_truth
+from models.triplet import TripletEmbedder
+from data.datasets import MVTecDataset
+from data.data_utils import *
 from evaluate import evaluate
 
 from conf.config import *
@@ -37,43 +38,47 @@ def main():
 
         if cfg["mode"] == "train":
             print("Training on category: ", cfg["dataset"]["category"])
-            train_loader, val_loader, test_loader = load_train_datasets(transform, cfg)
         elif cfg["mode"] == "test":
             print("Testing on category: ", cfg["dataset"]["category"])
-            test_neg_image_list = sorted(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', 'good', '*.png')))
-            test_pos_image_list = set(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', '*', '*.png'))) - set(test_neg_image_list)
-            test_pos_image_list = sorted(list(test_pos_image_list))
-            test_neg_dataset = MVTecDataset(test_neg_image_list, transform=transform)
-            test_pos_dataset = MVTecDataset(test_pos_image_list, transform=transform)
-            test_neg_loader = DataLoader(test_neg_dataset, batch_size=1, shuffle=False, drop_last=False)
-            test_pos_loader = DataLoader(test_pos_dataset, batch_size=1, shuffle=False, drop_last=False)
+            test_neg_loader, test_pos_loader = load_test_datasets(transform, cfg)
 
-        teacher = ResNet18_MS3(pretrained=True)
-        student = ResNet18_MS3(pretrained=False)
-        teacher.cuda()
-        student.cuda()
-
-        if cfg["mode"] == "train":        
-            if cfg["models"]["st_path"]:
+        if cfg["mode"] == "train":
+            student = ResNet18_MS3(pretrained=False)
+            mean, std = 0.0, 0.0
+            
+            if cfg["student"]["train"] == True:
+                teacher = ResNet18_MS3(pretrained=True)
+                teacher.cuda()
+                student.cuda()
+                # train student model
+                train_loader, val_loader = load_st_train_datasets(transform, cfg)
+                student = train_student(teacher, student, train_loader, val_loader, cfg, out)
+                mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda")
+            elif cfg["student"]["checkpoint"]: # Load student model from checkpoint
                 try:
                     print('loading model ' + cfg['models']['st_path'])
                     saved_dict = torch.load(cfg["models"]["st_path"])
                     student.load_state_dict(saved_dict['state_dict'])
-                    best_student = copy.deepcopy(student)
+                    student.cuda()
+                    mean, std = load_calibration_stats(cfg["models"]["calibration"])
                 except Exception as e:
                     print(f"Error loading student model from {cfg['models']['st_path']}: {e}")
                     raise
             else:
-                best_student = train_val_student(teacher, student, train_loader, val_loader, cfg, out)
-                
-            test_err_map = get_error_map(teacher, best_student, test_loader)
-            if cfg["models"]["calibration"]:
-                mean, std = load_calibration_stats(cfg["models"]["calibration"])
-            else:
-                mean, std = compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda")
-            crop_images(test_err_map, test_loader, mean, std, cfg, out)
+                print("Error: No student training or checkpoint provided.")
+                return
+            
+            if cfg["triplet"]["train"] == True:
+                triplet = TripletEmbedder(pretrained=True)
+                triplet.cuda()
+                train_loader, val_loader = load_tl_datasets(cfg, out)
+                train_triplet(triplet, train_loader, val_loader, cfg, out)
+            
+            #test_err_map = get_error_map(teacher, best_student, test_loader)                
+            # crop_images(test_err_map, test_loader, mean, std, cfg, out)
             # triplet_learning(args)
-        # elif args.mode == 'test':
+        elif cfg["mode"] == "test":
+            pass
         #     saved_dict = torch.load(args.checkpoint)
         #     category = args.category
         #     gt = load_ground_truth(args.mvtec_ad, category)
@@ -104,8 +109,8 @@ def main():
     except Exception as e:
         print(f"An error occurred: {e}")
         raise
-   
-def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
+
+def train_student(teacher, student, train_loader, val_loader, cfg, out):
     print("Student training started...")
     min_err = 10000 # Stores the best validation error so far.
     teacher.eval()  # Teacher model is forzen
@@ -114,10 +119,10 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
     best_student = None
     
     # Using SGD optimizer for training the student model
-    optimizer = torch.optim.SGD(student.parameters(), 0.4, momentum=0.9, weight_decay=1e-4)
+    optimizer = torch.optim.SGD(student.parameters(), lr=cfg['student']['lr'], momentum=cfg['student']['momentum'], weight_decay=cfg['student']['weight_decay'])
     # Main training loop
-    print(f"Epoch: 0/{cfg['student_training']['epochs']}",end="\r")
-    for epoch in range(cfg["student_training"]["epochs"]):
+    print(f"Epoch: 0/{cfg['student']['epochs']}",end="\r")
+    for epoch in range(cfg["student"]["epochs"]):
         student.train()
         running_loss = 0.0
         num_batches = 0
@@ -141,7 +146,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
                 # The loss = average squared distance between the teacher and student features, summed over feature levels.
                 loss += torch.sum((t_feat[i] - s_feat[i]) ** 2, 1).mean()
 
-            print("[%d/%d] loss: %f" % (epoch, cfg['student_training']['epochs'], loss.item()))
+            print("[%d/%d] loss: %f" % (epoch, cfg['student']['epochs'], loss.item()))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -150,7 +155,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
         
         avg_train_loss = running_loss / num_batches
 
-        # Runs the test() function on the validation set.
+        # get the error map using the validation set.
         err = get_error_map(teacher, student, val_loader)
         
         err_mean = err.mean()
@@ -166,7 +171,7 @@ def train_val_student(teacher, student, train_loader, val_loader, cfg, out):
             }
             torch.save(state_dict, save_name)
             best_student = copy.deepcopy(student)
-        print(f"Epoch: [{epoch+1}/{cfg['student_training']['epochs']}] - Avg training loss: {avg_train_loss:.6f} - Validation loss: {err_mean.item():.7f}",end="\r")
+        print(f"Epoch: [{epoch+1}/{cfg['student']['epochs']}] - Avg training loss: {avg_train_loss:.6f} - Validation loss: {err_mean.item():.7f}",end="\r")
         
     print("\nStudent training completed.")
     return best_student
@@ -236,75 +241,100 @@ def crop_images(loss_map, loader, mean, std, cfg, out):
                    
     print("\nCropping images completed.",end="\n")
 
-def triplet_learning(cfg):
+def train_triplet(model , train_loader, val_loader, cfg, out):
     print("Starting triplet learning...")
-    triplet_model = ResNet18_MS3(pretrained=False)
+    CATEGORY = cfg["dataset"]["category"]
+    TOTAL_EPOCHS = cfg["triplet"]["epochs"]
+    MARGIN = cfg["triplet"]["margin"]
+    LR = cfg["triplet"]["lr"]
+    WGT_DECAY = cfg["triplet"]["weight_decay"]
+    TRIPLETPATH = out["base"]["triplet"]
     
-    train_tf = transforms.Compose([
-        transforms.Resize(256),  # keep aspect ratio
-        transforms.RandomRotation(12, interpolation=InterpolationMode.BILINEAR, fill=0),
-        transforms.CenterCrop(224),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.ToTensor(),
-        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-    ])
+    model.train()
+    min_err = 10000 # Stores the best validation error so far.
+    best_model = None
     
-    val_tf = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-    ])
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WGT_DECAY)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TOTAL_EPOCHS)
+    triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
+        distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
+        margin=MARGIN)
     
-    train_image_list = glob(os.path.join("outputs/Defect labeling.v1i.folder", 'train', '*', '*.jpg'))
-    train_dataset = MVTecDataset(train_image_list, transform=train_tf)
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True, drop_last=False)
-    print("Triplet learning training dataset loaded")
-    
-    val_image_list = glob(os.path.join("outputs/Defect labeling.v1i.folder", 'valid', '*', '*.jpg'))
-    val_dataset = MVTecDataset(train_image_list, transform=val_tf)
-    val_loader = DataLoader(train_dataset, batch_size=32, shuffle=False, drop_last=False)
-    print("Triplet learning validation dataset loaded")
-    
-    
+    for epoch in range(TOTAL_EPOCHS):
+        model.train()
+        total_loss, total_triplets, contrib_batches = 0.0, 0, 0
+        
+        # ---- Training START ----
+        for x, y, _, _ in train_loader:
+            # 1. Move data to GPU
+            x = x.cuda()
+            y = y.cuda()
+            
+            # 2. Forward pass
+            z = model(x) # shape [B, D]
+
+            # 3. Mine triplets from the batch
+            a, p, n = mine_batch_hard(z.detach(), y, MARGIN)
+            if len(a) == 0:
+                continue # No valid triplets in the batch
+            
+            # 4. Compute triplet loss on the mined triplets
+            loss = triplet_loss(z[a], z[p], z[n])
+            
+            # 5. Backpropagation and optimization step
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+            
+            # 6. Track stats
+            total_loss += loss.item()
+            total_triplets += len(a)
+            contrib_batches += 1
+        
+        sched.step()
+        avg_loss = total_loss / max(1, contrib_batches)
+        print(f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] - train_loss={avg_loss:.4f} | triplets={total_triplets}")
+        # ---- Training END ----
+        
+        # ---- Validation (no grad) START ----
+        model.eval()
+        val_total_loss, val_total_triplets, val_contrib_batches = 0.0, 0, 0
+        with torch.no_grad():
+            for x, y, _, _ in val_loader:
+                x = x.cuda(non_blocking=True)
+                y = y.cuda(non_blocking=True)
+
+                z = model(x)
+                z = F.normalize(z, p=2, dim=1)
+
+                a, p, n = mine_batch_hard(z, y, MARGIN)
+                if len(a) == 0:
+                    continue
+
+                loss = triplet_loss(z[a], z[p], z[n])
+                val_total_loss += loss.item()
+                val_total_triplets += len(a)
+                val_contrib_batches += 1
+
+        # average over number of *batches that produced triplets*
+        val_avg_loss = val_total_loss / max(1, val_contrib_batches)
+        print(f"val_loss={val_avg_loss:.4f} | val_triplets={val_total_triplets}")
+        # ---- Validation END ----
+        
+        # ---- Save best model ----
+        if val_total_triplets > 0 and val_avg_loss < min_err:
+            min_err = val_avg_loss
+            best_model = {
+                'category': CATEGORY,
+                "state_dict": model.state_dict()
+            }
+            torch.save(best_model, os.path.join(TRIPLETPATH, 'triplet_best.pth'))
+            
+        print(f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] - train_loss={avg_loss:.4f} - triplets={total_triplets} - val_loss={val_avg_loss:.4f} - triplets={val_total_triplets}", end='\r')
+
     print("Triplet learning completed.")
 
-def load_train_datasets(transform, cfg):
-    print("Loading datasets...")
-    image_list = sorted(glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'train', 'good', '*.png')))
-    train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
-    train_dataset = MVTecDataset(train_image_list, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=cfg["student_training"]["batch_size"], shuffle=True, drop_last=False)
-    print("Training dataset loaded")
-    val_dataset = MVTecDataset(val_image_list, transform=transform)
-    val_loader = DataLoader(val_dataset, batch_size=cfg["student_training"]["batch_size"], shuffle=False, drop_last=False)
-    print("Validation dataset loaded")
-    test_image_list = glob(os.path.join(cfg["dataset"]["root"], cfg["dataset"]["category"], 'test', '*', '*.png'))
-    test_dataset = MVTecDataset(test_image_list, transform=transform)
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
-    print("Test dataset loaded")
-    print("Datasets loading completed.")
-    return train_loader, val_loader, test_loader
 
-def load_calibration_stats(cali_path):
-    try:
-        stats = np.load(cali_path)
-        mean = stats['mean']
-        std = stats['std']
-        print(f"Loaded calibration stats: mean={mean}, std={std}")
-        return mean, std
-    except Exception as e:
-        print(f"Error loading calibration stats from {cali_path}: {e}")
-        exit(1)
-
-def save_config(cfg, path):
-    config_save_path = os.path.join(path, "config.yaml")
-    try:
-        with open(config_save_path, 'w') as file:
-            yaml.dump(cfg, file)
-    except Exception as e:
-        print(f"Error saving configuration to {config_save_path}: {e}")
-        exit(1)
 
 if __name__ == "__main__":
     main()

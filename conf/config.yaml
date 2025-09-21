@@ -1,25 +1,36 @@
 mode: train
 
 dataset:
-  root: /kaggle/input/mvtec-ad
-  category: leather
+  mvtec_path: /kaggle/input/mvtec-ad
+  mvtec_category: cable
+  ok_crops: /kaggle/crops/ok
+  notok_crops: /kaggle/crops/not_ok
+  ok_manifest: /kaggle/crops/ok_manifest.csv
+  notok_manifest: /kaggle/crops/notok_manifest.csv
+  
 
-student_training:
+student:
+  train: true,
   epochs: 100
   batch_size: 32
+  lr: 0.4
+  momentum: 0.9
+  weight_decay: 1e-4
+  checkpoint: null
+  calibration: null
 
-triplet_training:
+triplet:
+  train: true,
   epochs: 100
   batch_size: 32
+  lr: 0.001
+  weight_decay: 1e-4
+  margin: 1.0
+  checkpoint: null
 
 heatmap_threshold:
   method: percentile
   value: 95.0
-
-models:
-  st_path: null
-  tl_path: null
-  calibration: null
 
 box: 
   expand: 0.05
@@ -29,3 +40,4 @@ nms:
   mode: mean
   score_thr: 0.1
   thr: 0.4
+
