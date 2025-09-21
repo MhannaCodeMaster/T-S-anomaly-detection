@@ -10,7 +10,6 @@ from pathlib import Path
 
 def get_error_map(teacher, student, loader):
     """Testing function to compute anomaly score maps."""
-    print("Computing anomaly score maps...")
     teacher.eval()
     student.eval()
     # Pre-allocate array to store the anomaly score map per image (64x64 resolution)
@@ -46,7 +45,6 @@ def get_error_map(teacher, student, loader):
         # Advances the index by the batch size.
         i += batch_img.size(0)
     
-    print("anomaly score maps computed.")    
     # Returns an (N, 64, 64) array of anomaly score maps, where N is the number of images (Higher = more anomalous).
     return loss_map
    
