@@ -78,13 +78,15 @@ def main():
             # crop_images(test_err_map, test_loader, mean, std, cfg, out)
             # triplet_learning(args)
         elif cfg["mode"] == "test":
-            pass
-        #     saved_dict = torch.load(args.checkpoint)
-        #     category = args.category
-        #     gt = load_ground_truth(args.mvtec_ad, category)
+            ST_CHECKPOINT = cfg["student"]["checkpoint"]
+            DATASETPATH = cfg["dataset"]["mvtec_path"]
+            CATEGORY = cfg["dataset"]["category"]
+            saved_dict = torch.load(ST_CHECKPOINT)
+            gt = load_ground_truth(DATASETPATH, CATEGORY)
 
-        #     print('load ' + args.checkpoint)
-        #     student.load_state_dict(saved_dict['state_dict'])
+            print('load ' + ST_CHECKPOINT)
+            student = ResNet18_MS3(pretrained=False)
+            student.load_state_dict(saved_dict['state_dict'])
 
         #     pos = get_error_map(teacher, student, test_pos_loader)
         #     neg = get_error_map(teacher, student, test_neg_loader)
