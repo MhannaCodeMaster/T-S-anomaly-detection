@@ -23,7 +23,7 @@ def load_ground_truth(root, category):
     gt = np.concatenate(gt, 0)
     return gt
 
-def load_st_train_datasets(transform, cfg, out):
+def load_st_train_datasets(transform, cfg):
     print("Loading T-S datasets...")
     image_list = sorted(glob(os.path.join(cfg["dataset"]["mvtec_path"], cfg["dataset"]["mvtec_category"], 'train', 'good', '*.png')))
     train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
