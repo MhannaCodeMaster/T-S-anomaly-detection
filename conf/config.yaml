@@ -9,7 +9,7 @@ dataset:
   
 
 student:
-  train: true,
+  train: true
   epochs: 100
   batch_size: 32
   lr: 0.4
@@ -19,7 +19,7 @@ student:
   calibration: null
 
 triplet:
-  train: true,
+  train: true
   epochs: 100
   batch_size: 32
   lr: 0.001
