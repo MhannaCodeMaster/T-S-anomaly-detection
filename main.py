@@ -7,8 +7,8 @@ from torchvision import transforms
 import numpy as np
 import cv2
 
-from models.teacher import ResNet18_MS3
-from models.triplet import TripletEmbedder
+from src.student_teacher.teacher import ResNet18_MS3
+from src.triplet.triplet import TripletEmbedder
 from src.data.data_utils import *
 
 from conf.config import *
