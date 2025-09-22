@@ -240,45 +240,6 @@ def get_box_scores(boxes, hm, mode="mean"):
     return scores
 
 @torch.no_grad()
-def compute_train_calibration_stats(teacher, student, train_loader, cfg, out, device="cuda"):
-    """
-    Compute scalar μ, σ over all pixels of anomaly maps on normal training images.
-    Saves to npz: {mean: float, std: float}.
-    Returns mean and std
-    """
-    print("Computing training set calibration stats...")
-    teacher.eval(); student.eval()
-    sums, sums2, count = 0.0, 0.0, 0
-
-    for _, batch_img in train_loader:
-        batch_img = batch_img.to(device, non_blocking=True)
-        t_feat = teacher(batch_img)
-        s_feat = student(batch_img)
-
-        # feature mismatch -> (N,1,h,w) per level -> upsample to a common 64x64 -> sum across levels
-        score = 0
-        for t, s in zip(t_feat, s_feat):
-            # per-pixel channel MSE
-            diff = (t - s).pow(2).mean(dim=1, keepdim=True)   # (N,1,h,w)
-            diff64 = F.interpolate(diff, size=(64, 64), mode="bilinear", align_corners=False)
-            score += diff64                                   # (N,1,64,64)
-
-        score_np = score.squeeze(1).float().cpu().numpy()     # (N,64,64)
-        sums  += score_np.sum()
-        sums2 += (score_np ** 2).sum()
-        count += score_np.size
-
-    mean = sums / max(1, count)
-    var  = (sums2 / max(1, count)) - (mean * mean)
-    std  = float(np.sqrt(max(var, 1e-12)))
-
-    file_path = os.path.join(out["calibration"],'calib_stats.npz')
-    np.savez(file_path, mean=float(mean), std=float(std))
-    print(f"[calib] saved μ={mean:.6g}, σ={std:.6g}")
-    return mean, std
-
-
-@torch.no_grad()
 def mine_batch_hard(emb, labels, margin):
     """
     emb:    [B, D] tensor of embeddings (batch size B, embedding dim D).

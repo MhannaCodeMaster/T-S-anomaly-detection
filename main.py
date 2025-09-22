@@ -3,23 +3,16 @@ from pathlib import Path
 import copy
 
 import torch
-from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.transforms.functional import InterpolationMode
 import numpy as np
 import cv2
 
-from sklearn.model_selection import train_test_split
-from glob import glob
-
 from models.teacher import ResNet18_MS3
 from models.triplet import TripletEmbedder
-from data.datasets import MVTecDataset
-from data.data_utils import *
-from evaluate import evaluate
+from src.data.data_utils import *
 
 from conf.config import *
-from utils import *
+from src.utils.utils import *
 
 def main():
     try:
@@ -79,6 +72,11 @@ def main():
             # triplet_learning(args)
         elif cfg["mode"] == "test":
             ST_CHECKPOINT = cfg["student"]["checkpoint"]
+            TL_CHECKPOINT = cfg["triplet"]["checkpoint"]
+            if not ST_CHECKPOINT or not TL_CHECKPOINT:
+                print("Error: Student and Triplet model checkpoints must be provided for testing.")
+                return
+            
             DATASETPATH = cfg["dataset"]["mvtec_path"]
             CATEGORY = cfg["dataset"]["category"]
             saved_dict = torch.load(ST_CHECKPOINT)
@@ -320,7 +318,7 @@ def train_triplet(model , train_loader, val_loader, cfg, out):
                 val_total_triplets += len(a)
                 val_contrib_batches += 1
 
-        # average over number of *batches that produced triplets*
+        # average over number of batches that produced triplets
         val_avg_loss = val_total_loss / max(1, val_contrib_batches)
         # ---- Validation END ----
         
@@ -337,6 +335,8 @@ def train_triplet(model , train_loader, val_loader, cfg, out):
 
     print("Triplet learning completed.")
 
+def test():
+    pass
 
 
 if __name__ == "__main__":

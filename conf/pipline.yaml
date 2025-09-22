@@ -1,0 +1,8 @@
+box: 
+  expand: 0.05
+  min_area: 600
+
+nms:
+  mode: mean
+  score_thr: 0.1
+  thr: 0.4

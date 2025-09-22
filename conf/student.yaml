@@ -1,0 +1,9 @@
+dataset: /kaggle/input/mvtec-ad
+category: cable
+
+epochs: 100
+batch_size: 32
+lr: 0.4
+weight_decay: 1e-4
+momentum: 0.9
+

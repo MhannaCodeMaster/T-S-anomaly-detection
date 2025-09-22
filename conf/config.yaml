@@ -31,7 +31,7 @@ heatmap_threshold:
   method: percentile
   value: 95.0
 
-box: 
+box:
   expand: 0.05
   min_area: 600
 

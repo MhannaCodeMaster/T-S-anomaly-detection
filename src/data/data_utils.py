@@ -25,13 +25,13 @@ def load_ground_truth(root, category):
 
 def load_st_train_datasets(transform, cfg):
     print("Loading T-S datasets...")
-    image_list = sorted(glob(os.path.join(cfg["dataset"]["mvtec_path"], cfg["dataset"]["mvtec_category"], 'train', 'good', '*.png')))
+    image_list = sorted(glob(os.path.join(cfg.dataset, cfg.category, 'train', 'good', '*.png')))
     train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
     train_dataset = MVTecDataset(train_image_list, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=cfg["student"]["batch_size"], shuffle=True, drop_last=False)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, drop_last=False)
     print("Training dataset loaded")
     val_dataset = MVTecDataset(val_image_list, transform=transform)
-    val_loader = DataLoader(val_dataset, batch_size=cfg["student"]["batch_size"], shuffle=False, drop_last=False)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False)
     print("Validation dataset loaded")
     print("T-S datasets loading completed.")
     return train_loader, val_loader

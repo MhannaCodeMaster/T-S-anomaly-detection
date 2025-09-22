@@ -1,8 +1,0 @@
-mode: test
-category: leather
-checkpoint: checkpoints/student.pth
-checkpoint_epoch: 100
-result_path: results
-save_fig: true
-mvtec_ad: mvtec_anomaly_detection
-output_path: outputs

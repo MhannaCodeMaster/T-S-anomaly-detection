@@ -1,0 +1,8 @@
+dataset: /kaggle/input/patches
+category: cable
+
+epochs: 100
+batch_size: 32
+lr: 0.001
+weight_decay: 1e-4
+margin: 0.3
