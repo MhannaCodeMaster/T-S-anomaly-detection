@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 from src.data.data_utils import *
 from src.triplet.triplet import TripletEmbedder
-
+from src.data.datasets import *
 
 def main():
     print("Evaluation triplet model...")
