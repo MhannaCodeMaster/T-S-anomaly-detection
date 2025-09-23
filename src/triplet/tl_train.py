@@ -207,7 +207,7 @@ def load_args():
     return args
 
 def load_config():
-    CONF_PATH = "../../conf/triplet.yaml"
+    CONF_PATH = "../conf/triplet.yaml"
     try:
         with open(CONF_PATH, 'r') as file:
             try:
