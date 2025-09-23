@@ -180,7 +180,7 @@ def load_tl_training_datasets(cfg, paths):
     train_dataset = torch.utils.data.ConcatDataset([train_ok_ds, train_notok_ds])
     val_dataset   = torch.utils.data.ConcatDataset([val_ok_ds, val_notok_ds])
     
-    BATCH_SIZE = cfg["triplet"]["batch_size"]
+    BATCH_SIZE = cfg.batch_size
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE,
                               shuffle=True, drop_last=True, num_workers=4, pin_memory=True)
