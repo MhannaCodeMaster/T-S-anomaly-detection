@@ -204,7 +204,8 @@ def load_args():
     p.add_argument("--weight_decay", type=float, required=False, help="Weight decay for triplet training")
     p.add_argument("--momentum", type=float, required=False, help="Momentum for triplet training")
     p.add_argument("--config", required=False, type=str, help="Config path")
-    
+    p.add_argument("--margin", required=False, type=str, help="Triplet margin")
+
     args = p.parse_args()
     return args
 
