@@ -110,7 +110,7 @@ def extract_embeddings(model, loader, device="cuda"):
 def plot_tsne(embs, labels, cfg):
     # t-SNE on normalized embeddings; Euclidean ~ cosine on unit sphere
     tsne = TSNE(
-        n_components=cfg.tsne_components,
+        n_components=int(cfg.tsne_components),
         init="pca",
         perplexity=30,
         learning_rate="auto",
