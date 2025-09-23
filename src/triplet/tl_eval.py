@@ -98,18 +98,7 @@ def load_val_crops(args, img_size=224, num_workers=4, pin_memory=True):
 def extract_embeddings(model, loader, device="cuda"):
     model.eval()
     embs, labels = [], []
-    for batch in loader:
-        # Accept (images, labels) or (paths, images, labels)
-        if isinstance(batch, (list, tuple)):
-            if len(batch) == 2:
-                x, y = batch
-            elif len(batch) == 3:
-                _, x, y = batch
-            else:
-                raise ValueError("Unexpected batch format for val loader.")
-        else:
-            raise ValueError("Val loader must return (x,y) or (path,x,y).")
-
+    for x, y, _, _ in loader:
         x = x.to(device, non_blocking=True)
         z = model(x)                     # already L2-normalized (B, D)
         embs.append(z.cpu())
