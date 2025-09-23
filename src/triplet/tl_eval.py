@@ -110,7 +110,7 @@ def extract_embeddings(model, loader, device="cuda"):
 def plot_tsne(embs, labels):
     # t-SNE on normalized embeddings; Euclidean ~ cosine on unit sphere
     tsne = TSNE(
-        n_components=2,
+        n_components=3,
         init="pca",
         perplexity=30,
         learning_rate="auto",
@@ -122,15 +122,14 @@ def plot_tsne(embs, labels):
     xy = tsne.fit_transform(embs)  # (N, 2)
 
     # Scatter: color by ground-truth label (let matplotlib pick default colors)
-    plt.figure(figsize=(7, 6), dpi=120)
-    uniq = np.unique(labels)
-    for u in uniq:
+    fig = plt.figure(figsize=(8, 6), dpi=120)
+    ax = fig.add_subplot(111, projection="3d")
+    for u in np.unique(labels):
         m = labels == u
-        plt.scatter(xy[m, 0], xy[m, 1], s=14, alpha=0.85, label=str(u))
-    plt.title("t-SNE of Triplet Embeddings (val)")
-    plt.xlabel("t-SNE 1")
-    plt.ylabel("t-SNE 2")
-    plt.legend(title="Label", loc="best", frameon=True)
-    plt.tight_layout()
-    plt.savefig("eval/triplet/images", bbox_inches="tight")
-    plt.close()
+        ax.scatter(Z[m, 0], Z[m, 1], Z[m, 2], s=14, alpha=0.85, label=str(u))
+    ax.set_title("t-SNE (3D) of Triplet Embeddings (val)")
+    ax.set_xlabel("t-SNE 1"); ax.set_ylabel("t-SNE 2"); ax.set_zlabel("t-SNE 3")
+    ax.legend(title="Label")
+    fig.tight_layout()
+    fig.savefig(save_path, bbox_inches="tight")
+    plt.close(fig)
