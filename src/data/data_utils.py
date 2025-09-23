@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import random
 
-from data.datasets import *
+from datasets import *
 from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 from glob import glob
