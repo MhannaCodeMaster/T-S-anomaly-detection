@@ -6,6 +6,7 @@ from torchvision import transforms
 
 from src.triplet.triplet import TripletEmbedder
 from src.data.data_utils import *
+from src.data.datasets import *
 
 from conf.config import *
 from src.utils.utils import *
