@@ -24,7 +24,7 @@ def main():
         model.cuda()
         model.load_state_dict(torch.load(args.model_path)['state_dict'])
         emd, label = extract_embeddings(model, val_loader)
-        plot_tsne(emd, label)
+        plot_tsne(emd, label, args)
     except Exception as e:
         print("Error has occured: ", e)
     print("Evaluation completed...")
@@ -33,13 +33,13 @@ def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
     #----- Required args -----#
     p.add_argument("--dataset", required=True, type=str, help="Path to the folder crops with ok/not ok dataset root directory")
+    p.add_argument("--val_mainfest_path", required=True, type=str, help="Path to the folder containing val_parents.csv")
+    p.add_argument("--model_path", required=True, type=str, help="Path to the trained triplet model")
     
     #----- Optional args -----#
     p.add_argument("--category", required=False, type=str, help="Dataset category (e.g., cable, hazelnut)")
     p.add_argument("--batch_size", type=int, required=False, help="Batch size for triplet training")
-    p.add_argument("--val_mainfest_path", required=True, type=str, help="Path to the folder containing val_parents.csv")
-    p.add_argument("--model_path", required=True, type=str, help="Path to the trained triplet model")
-    
+    p.add_argument("--tsne_components", required=False, type=str, help="T-SNE components (2: 2D or 3: 3D) ")
 
     args = p.parse_args()
     return args
@@ -107,10 +107,10 @@ def extract_embeddings(model, loader, device="cuda"):
     labels = torch.cat(labels, dim=0).numpy() # (N,)
     return embs, labels
 
-def plot_tsne(embs, labels):
+def plot_tsne(embs, labels, cfg):
     # t-SNE on normalized embeddings; Euclidean ~ cosine on unit sphere
     tsne = TSNE(
-        n_components=3,
+        n_components=cfg.tsne_components,
         init="pca",
         perplexity=30,
         learning_rate="auto",
