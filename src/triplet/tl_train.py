@@ -14,7 +14,7 @@ from src.paths import get_paths
 def main():
     print("Triplet learning started...")
     args = load_args()
-    cfg = load_config()
+    cfg = load_config(args)
     cfg = override_config(cfg, args)
     paths = get_paths(cfg.category, 'triplet')
     print("Training on category: ", cfg.category)
@@ -207,8 +207,8 @@ def load_args():
     args = p.parse_args()
     return args
 
-def load_config():
-    CONF_PATH = "../conf/triplet.yaml"
+def load_config(args):
+    CONF_PATH = args.config
     try:
         with open(CONF_PATH, 'r') as file:
             try:
