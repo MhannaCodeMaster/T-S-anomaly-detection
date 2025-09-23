@@ -19,7 +19,7 @@ def main():
     print("Evaluating on category: ", args.category)
     
     try:
-        val_loader = load_val_crops(args)
+        val_loader, _, _ = load_val_crops(args)
         model = TripletEmbedder(pretrained=False)
         model.cuda()
         model.load_state_dict(torch.load(args.model_path)['state_dict'])
