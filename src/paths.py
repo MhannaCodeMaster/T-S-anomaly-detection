@@ -3,7 +3,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 # Hardcoded base path
-ARTIFACTS_BASE = Path("../artifacts")
+ARTIFACTS_BASE = Path("/kaggle/working/artifacts")
 
 def make_run_id(category: str) -> str:
     """Generate run_id as YYYY-MM-DD_HH-MM-SS_<category>."""
