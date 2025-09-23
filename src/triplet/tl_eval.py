@@ -119,7 +119,7 @@ def plot_tsne(embs, labels):
         n_iter=1000,
         verbose=1,
     )
-    xy = tsne.fit_transform(embs)  # (N, 2)
+    Z = tsne.fit_transform(embs)  # (N, 2)
 
     # Scatter: color by ground-truth label (let matplotlib pick default colors)
     fig = plt.figure(figsize=(8, 6), dpi=120)
