@@ -114,6 +114,8 @@ def load_args():
     #----- Required args -----#
     p.add_argument("--image_path", required=True, type=str, help="Test image path")
     p.add_argument("--category", required=True, type=str, help="Dataset category (e.g., cable, hazelnut)")
+    p.add_argument("--st_path", required=True, type=str, help="Student model path")
+    p.add_argument("--tl_path", required=True, type=str, help="Triplet model path")
 
     args = p.parse_args()
     return args
