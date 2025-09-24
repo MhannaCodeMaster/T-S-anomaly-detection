@@ -82,8 +82,8 @@ def crop_images(loss_map, loader, mean, std, cfg):
             boxes = components_to_bboxes(mask, min_area=700, ignore_border=True)
             # Run NMS
             scores = get_box_scores(boxes, hm_z, mode='mean')
-            score_thr = score_thr # confidence threshold
-            nms_thr   = thr
+            score_thr = 0.1 # confidence threshold
+            nms_thr   = 0.4
             indices = cv2.dnn.NMSBoxes(boxes, scores, score_thr, nms_thr)
             if len(indices) > 0:
                 indices = indices.flatten()
