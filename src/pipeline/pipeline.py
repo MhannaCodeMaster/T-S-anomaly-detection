@@ -20,7 +20,7 @@ def main():
     args = load_args()
     teacher = ResNet18_MS3(pretrained=True)
     student = ResNet18_MS3(pretrained=False)
-    triplet = TripletEmbedder(prtrained=False)
+    triplet = TripletEmbedder(pretrained=False)
 
     teacher.cuda()
     student.cuda()
