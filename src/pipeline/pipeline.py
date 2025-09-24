@@ -97,6 +97,10 @@ def crop_images(loss_map, loader, mean, std, cfg):
             stem = Path(p).stem
             defect = Path(p).parent.name
 
+            base_eval = "/kaggle/working/eval"
+            os.makedirs(os.path.join(base_eval, "crops"), exist_ok=True)
+            os.makedirs(os.path.join(base_eval, "images"), exist_ok=True)
+
             for bi, (x,y,w,h) in enumerate(boxes):
                 x0, y0, x1, y1 = pad_box(x,y,w,h,H,W,pad_ratio=0.05)
                 crop = img[y0:y1, x0:x1]
