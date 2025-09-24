@@ -8,6 +8,7 @@ import numpy as np
 
 from src.student_teacher.teacher import ResNet18_MS3
 from src.data.data_utils import *
+from src.data.datasets import *
 from src.triplet.triplet import *
 
 from conf.config import *
