@@ -116,7 +116,7 @@ def load_args():
     p.add_argument("--category", required=True, type=str, help="Dataset category (e.g., cable, hazelnut)")
     p.add_argument("--st_path", required=True, type=str, help="Student model path")
     p.add_argument("--tl_path", required=True, type=str, help="Triplet model path")
-
+    p.add_argument("--calibration", required=True, type=str, help="Calibration path")
     args = p.parse_args()
     return args
 
