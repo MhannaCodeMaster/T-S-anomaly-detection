@@ -8,6 +8,7 @@ import numpy as np
 
 from src.student_teacher.teacher import ResNet18_MS3
 from src.data.data_utils import *
+from src.triplet.triplet import *
 
 from conf.config import *
 from src.utils.utils import *
@@ -19,6 +20,7 @@ def main():
     args = load_args()
     teacher = ResNet18_MS3(pretrained=True)
     student = ResNet18_MS3(pretrained=False)
+    triplet = TripletEmbedder(prtrained=False)
 
     teacher.cuda()
     student.cuda()
@@ -34,8 +36,8 @@ def main():
     student.cuda()
     
     tl_saved_dict = torch.load(args.tl_path)
-    student.load_state_dict(tl_saved_dict['state_dict'])
-    student.cuda()
+    triplet.load_state_dict(tl_saved_dict['state_dict'])
+    triplet.cuda()
     
     test_loader = load_test_datasets(transform, args)
     mean, std = load_calibration_stats(args.calibration)
