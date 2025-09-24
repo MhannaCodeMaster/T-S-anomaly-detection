@@ -29,10 +29,18 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
+    st_saved_dict = torch.load(args.st_path)
+    student.load_state_dict(st_saved_dict['state_dict'])
+    student.cuda()
+    
+    tl_saved_dict = torch.load(args.tl_path)
+    student.load_state_dict(tl_saved_dict['state_dict'])
+    student.cuda()
+    
     test_loader = load_test_datasets(transform, args)
-    mean, std = load_calibration_stats(cfg.calibration)
-    test_err_map = get_error_map(teacher, best_student, test_loader)                
-    crop_images(test_err_map, test_loader, mean, std, cfg)
+    mean, std = load_calibration_stats(args.calibration)
+    test_err_map = get_error_map(teacher, student, test_loader)                
+    crop_images(test_err_map, test_loader, mean, std, args)
     # triplet_eval()
 
 def crop_images(loss_map, loader, mean, std, cfg):
@@ -110,9 +118,9 @@ def load_args():
     args = p.parse_args()
     return args
 
-def load_test_datasets(transfrom, args):
+def load_test_datasets(transform, args):
     print("Loading Test dataset...")
-    image_list = sorted(glob(os.path.join(cfg.dataset, cfg.category, 'test', '*', '*.png')))
+    image_list = sorted(glob(os.path.join(args.dataset, args.category, 'test', '*', '*.png')))
     test_image_list = [random.choice(image_list)]
     test_dataset = MVTecDataset(test_image_list, transform=transform)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
