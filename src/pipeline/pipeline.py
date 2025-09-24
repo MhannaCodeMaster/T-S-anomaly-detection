@@ -112,7 +112,7 @@ def crop_images(loss_map, loader, mean, std, cfg):
 def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
     #----- Required args -----#
-    p.add_argument("--image_path", required=True, type=str, help="Test image path")
+    p.add_argument("--dataset", required=True, type=str, help="Dataset root path")
     p.add_argument("--category", required=True, type=str, help="Dataset category (e.g., cable, hazelnut)")
     p.add_argument("--st_path", required=True, type=str, help="Student model path")
     p.add_argument("--tl_path", required=True, type=str, help="Triplet model path")
