@@ -127,7 +127,7 @@ def load_args():
     p.add_argument("--dataset", required=True, type=str, help="Dataset root path")
     p.add_argument("--category", required=True, type=str, help="Dataset category (e.g., cable, hazelnut)")
     p.add_argument("--st_path", required=True, type=str, help="Student model path")
-    p.add_argument("--h_th", required=True, type=float, help="Heatmap_threshold")
+    p.add_argument("--h_th", required=False, default=99, type=float, help="Heatmap_threshold")
     p.add_argument("--tl_path", required=True, type=str, help="Triplet model path")
     p.add_argument("--calibration", required=True, type=str, help="Calibration path")
     p.add_argument("--emd_gal", required=True, type=str, help="Saved embeddings gallery")
