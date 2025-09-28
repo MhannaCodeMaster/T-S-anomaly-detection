@@ -169,9 +169,15 @@ def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, th
     
     gal_pkg = torch.load(args.emd_gal, map_location="cpu", weights_only=False)
     Zg = gal_pkg["embeddings"]              # [N, D], L2-normalized
-    yg = gal_pkg["labels"].long()           # [N], 0=OK, 1=DEFECT
+    yg = gal_pkg["labels"]           # [N], 0=OK, 1=DEFECT
+    
+    Zg = torch.as_tensor(Zg, dtype=torch.float32)  # [N, D]
+    yg = torch.as_tensor(yg, dtype=torch.long)     # [N]  (0=OK, 1=DEFECT)
+    
+    Zg = torch.nn.functional.normalize(Zg, p=2, dim=1)
     
     z, x_tensor = embed_crops(model, crops, transform, device=device)  # z: [B,D]
+    Zg = Zg.to(device)
     # k-NN against gallery (distance-weighted)
     # 3) k-NN scoring (distance-weighted fraction of defect neighbors)
     d   = torch.cdist(z, Zg)                                    # [B,N]
