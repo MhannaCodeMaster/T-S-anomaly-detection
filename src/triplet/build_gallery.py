@@ -1,9 +1,9 @@
 import torch
 
-from triplet.triplet import *
-from triplet.tl_eval import *
-from data.datasets import *
-from data.data_utils import *
+from src.triplet.triplet import *
+from src.triplet.tl_eval import *
+from src.data.datasets import *
+from src.data.data_utils import *
 
 
 def main():
