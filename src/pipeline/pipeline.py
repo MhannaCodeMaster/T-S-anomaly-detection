@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import torch
 from torchvision import transforms
 import numpy as np
+from PIL import Image
+
 
 from src.student_teacher.teacher import ResNet18_MS3
 from src.data.data_utils import *
@@ -43,8 +45,8 @@ def main():
     test_loader = load_test_datasets(transform, args)
     mean, std = load_calibration_stats(args.calibration)
     test_err_map = get_error_map(teacher, student, test_loader)                
-    crop_images(test_err_map, test_loader, mean, std, args)
-    # triplet_eval()
+    crops = crop_images(test_err_map, test_loader, mean, std, args)
+    res = triplet_classifer(triplet, transforms, crops)
 
 def crop_images(loss_map, loader, mean, std, cfg):
     print("Starting cropping images...",end='\n')  
@@ -101,9 +103,11 @@ def crop_images(loss_map, loader, mean, std, cfg):
             os.makedirs(os.path.join(base_eval, "crops"), exist_ok=True)
             os.makedirs(os.path.join(base_eval, "images"), exist_ok=True)
 
+            crops = []
             for bi, (x,y,w,h) in enumerate(boxes):
                 x0, y0, x1, y1 = pad_box(x,y,w,h,H,W,pad_ratio=0.05)
                 crop = img[y0:y1, x0:x1]
+                crops.append(crop)
                 cv2.imwrite(os.path.join('/kaggle/working/eval/crops', f"{defect}_{stem}_box{bi}.png"), crop)
             
             cv2.imwrite(os.path.join('/kaggle/working/eval/images', f"{defect}_{stem}_orig.png"), img)
@@ -114,7 +118,7 @@ def crop_images(loss_map, loader, mean, std, cfg):
         idx += bs
                    
     print("\nCropping images completed.",end="\n")
-
+    return crops
 
 def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
@@ -135,6 +139,30 @@ def load_test_datasets(transform, args):
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
     print("Loading test dataset completed.")
     return test_loader
+
+def preprocess_crops(crops, transform):
+    tensors = []
+    for crop in crops:
+        # convert BGR (OpenCV) → RGB (PIL)
+        crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(crop_rgb)
+        tensors.append(transform(pil_img))
+    if len(tensors) == 0:
+        return None
+    return torch.stack(tensors)   # shape (N, C, H, W)
+
+@torch.no_grad()
+def embed_crops(model, crops, transform, device="cuda"):
+    x = preprocess_crops(crops, transform)
+    if x is None: 
+        return None, None
+    x = x.to(device)
+    z = model(x)                  # (N, D)
+    z = F.normalize(z, p=2, dim=1)
+    return z, x
+
+def triplet_classifer(model, transforms, crops):
+    pass
 
 if __name__ == '__main__':
     main()

@@ -14,10 +14,10 @@ from src.triplet.triplet import TripletEmbedder
 from src.data.datasets import *
 
 def main():
-    print("Evaluation triplet model...")
     args = load_args()
-    print("Evaluating on category: ", args.category)
+    print("Evaluation triplet model...")
     
+    print("Evaluating on category: ", args.category)
     try:
         val_loader, _, _ = load_val_crops(args)
         model = TripletEmbedder(pretrained=False)
@@ -131,7 +131,7 @@ def plot_tsne(embs, labels, cfg):
         plt.xlabel("t-SNE 1"); plt.ylabel("t-SNE 2")
         plt.legend(title="Label", frameon=True)
         plt.tight_layout()
-        plt.savefig(save_path, bbox_inches="tight")
+        # plt.savefig(save_path, bbox_inches="tight")
         plt.close()
     elif dim == 3:
         fig = plt.figure(figsize=(8, 6), dpi=120)
