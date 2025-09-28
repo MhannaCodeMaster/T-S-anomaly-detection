@@ -74,7 +74,7 @@ def crop_images(loss_map, loader, mean, std, cfg):
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             
-            mask, thr = threshold_heatmap(hm_z, method='percentile', percentile=94.5)
+            mask, thr = threshold_heatmap(hm_z, method='percentile', percentile=cfg.h_th)
             # clean mask
             K_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))    # remove salt-noise
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, K_open)
@@ -127,6 +127,7 @@ def load_args():
     p.add_argument("--dataset", required=True, type=str, help="Dataset root path")
     p.add_argument("--category", required=True, type=str, help="Dataset category (e.g., cable, hazelnut)")
     p.add_argument("--st_path", required=True, type=str, help="Student model path")
+    p.add_argument("--h_th", required=True, type=float, help="Heatmap_threshold")
     p.add_argument("--tl_path", required=True, type=str, help="Triplet model path")
     p.add_argument("--calibration", required=True, type=str, help="Calibration path")
     p.add_argument("--emd_gal", required=True, type=str, help="Saved embeddings gallery")
@@ -164,7 +165,7 @@ def embed_crops(model, crops, transform, device="cuda"):
     z = F.normalize(z, p=2, dim=1)
     return z, x
 
-def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, thresh=0.5, device='cuda'):
+def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, thresh=0.8, device='cuda'):
     orig_image_path = image_paths[0]
     
     gal_pkg = torch.load(args.emd_gal, map_location='cpu', weights_only=False)
