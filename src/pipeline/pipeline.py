@@ -167,7 +167,7 @@ def embed_crops(model, crops, transform, device="cuda"):
 def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, thresh=0.5, device='cuda'):
     orig_image_path = image_paths[0]
     
-    gal_pkg = torch.load(args.emd_gal, map_location="cpu")
+    gal_pkg = torch.load(args.emd_gal, map_location="cpu", weights_only=False)
     Zg = gal_pkg["embeddings"]              # [N, D], L2-normalized
     yg = gal_pkg["labels"].long()           # [N], 0=OK, 1=DEFECT
     
