@@ -198,7 +198,7 @@ def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, th
     image_pred  = int(image_score >= thresh)
 
     # 5) Draw visualization
-    img = cv2.imread([orig_image_path])
+    img = cv2.imread(orig_image_path)
     if img is None:
         print(f"[warn] Could not read {orig_image_path} to draw boxes.")
 
