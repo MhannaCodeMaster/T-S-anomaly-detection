@@ -45,17 +45,18 @@ def main():
     test_loader = load_test_datasets(transform, args)
     mean, std = load_calibration_stats(args.calibration)
     test_err_map = get_error_map(teacher, student, test_loader)                
-    crops = crop_images(test_err_map, test_loader, mean, std, args)
-    res = triplet_classifer(triplet, transforms, crops)
+    crops, boxes, image_paths = crop_images(test_err_map, test_loader, mean, std, args)
+    res = triplet_classifer(triplet, transforms, boxes, image_paths, crops, args)
 
 def crop_images(loss_map, loader, mean, std, cfg):
     print("Starting cropping images...",end='\n')  
     total = len(loader.dataset)
     print(f"images processed: [0/{total}]",end="\r")
     idx = 0
+    orig_img_path = []
     for batch in loader:
         img_paths, _ = batch
-        
+        orig_img_path = img_paths
         bs = len(img_paths)
         hm_batch = loss_map[idx: idx + bs]
         for k, p in enumerate(img_paths):
@@ -118,7 +119,7 @@ def crop_images(loss_map, loader, mean, std, cfg):
         idx += bs
                    
     print("\nCropping images completed.",end="\n")
-    return crops
+    return crops, boxes, orig_img_path
 
 def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
@@ -128,6 +129,8 @@ def load_args():
     p.add_argument("--st_path", required=True, type=str, help="Student model path")
     p.add_argument("--tl_path", required=True, type=str, help="Triplet model path")
     p.add_argument("--calibration", required=True, type=str, help="Calibration path")
+    p.add_argument("--emd_gal", required=True, type=str, help="Saved embeddings gallery")
+
     args = p.parse_args()
     return args
 
@@ -161,8 +164,44 @@ def embed_crops(model, crops, transform, device="cuda"):
     z = F.normalize(z, p=2, dim=1)
     return z, x
 
-def triplet_classifer(model, transforms, crops):
-    pass
+def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, thresh=0.5, device='cuda'):
+    orig_image_path = image_paths[0]
+    
+    gal_pkg = torch.load(args.emd_gal, map_location="cpu")
+    Zg = gal_pkg["embeddings"]              # [N, D], L2-normalized
+    yg = gal_pkg["labels"].long()           # [N], 0=OK, 1=DEFECT
+    
+    z, x_tensor = embed_crops(model, crops, transform, device=device)  # z: [B,D]
+    # k-NN against gallery (distance-weighted)
+    # 3) k-NN scoring (distance-weighted fraction of defect neighbors)
+    d   = torch.cdist(z, Zg)                                    # [B,N]
+    kk  = min(k, Zg.shape[0])
+    d_k, idx = torch.topk(d, k=kk, dim=1, largest=False)        # [B,kk]
+    y_k = yg[idx]                                               # [B,kk]
+
+    w = 1.0 / (d_k + 1e-6)
+    w = w / (w.sum(dim=1, keepdim=True) + 1e-6)
+    defect_frac = (w * (y_k == 1).float()).sum(dim=1)           # [B] in [0,1]
+
+    # 4) Decide defect crops + image score
+    crop_preds = (defect_frac >= thresh).long().tolist()
+    crop_scores = defect_frac.tolist()
+    image_score = float(defect_frac.max().item())
+    image_pred  = int(image_score >= thresh)
+
+    # 5) Draw visualization
+    img = cv2.imread([orig_image_path])
+    if img is None:
+        print(f"[warn] Could not read {orig_image_path} to draw boxes.")
+
+    for (x, y, w, h), pred, score in zip(boxes, crop_preds, crop_scores):
+        color = (0, 0, 255) if pred == 1 else (0, 255, 0)  # red defect, green ok (BGR)
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(img, f"{score:.2f}", (x, max(0, y-5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+
+    cv2.imwrite("result.png", img)
+
 
 if __name__ == '__main__':
     main()
