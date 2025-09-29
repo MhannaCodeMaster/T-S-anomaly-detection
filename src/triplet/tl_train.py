@@ -4,6 +4,9 @@ from types import SimpleNamespace
 import torch
 from torchvision import transforms
 
+from sklearn.metrics import roc_auc_score, average_precision_score, f1_score
+
+
 from src.triplet.triplet import TripletEmbedder
 from src.data.data_utils import *
 from src.data.datasets import *
@@ -37,6 +40,10 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     WGT_DECAY = float(cfg.weight_decay)
     TRIPLETPATH = paths.checkpoint
     
+    train_active_sum, train_batches = 0.0, 0
+    val_active_sum, val_batches = 0.0, 0
+
+    
     model.train()
     min_err = 10000 # Stores the best validation error so far.
     best_model = None
@@ -59,6 +66,11 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             
             # 2. Forward pass
             z = model(x) # shape [B, D]
+
+            act_pct = mining_stats(z.detach(), y, MARGIN)
+            
+            train_active_sum += act_pct
+            train_batches += 1
 
             # 3. Mine triplets from the batch
             a, p, n = mine_batch_hard(z.detach(), y, MARGIN)
@@ -91,6 +103,10 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
                 y = y.cuda(non_blocking=True)
 
                 z = model(x)
+                act_pct = mining_stats(z.detach(), y, MARGIN)
+                val_act_pct = mining_stats(z, y, MARGIN)
+                val_active_sum += val_act_pct
+                val_batches += 1
 
                 a, p, n = mine_batch_hard(z, y, MARGIN)
                 if len(a) == 0:
@@ -113,9 +129,18 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
                 "state_dict": model.state_dict()
             }
             torch.save(best_model, os.path.join(TRIPLETPATH))
-            
-        print(f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] - train_loss={avg_loss:.4f} - train_triplets={total_triplets} - val_loss={val_avg_loss:.4f} - val_triplets={val_total_triplets}", end='\r')
+        
+        train_active = train_active_sum / max(1, train_batches)
+        val_active   = val_active_sum   / max(1, val_batches)
 
+        print(
+            f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] "
+            f"- train_loss={avg_loss:.4f} - train_triplets={total_triplets} "
+            f"- train_active={train_active:.1f}% "
+            f"- val_loss={val_avg_loss:.4f} - val_triplets={val_total_triplets} "
+            f"- val_active={val_active:.1f}%"
+        )
+ 
     print("Triplet learning completed.")
     
 def load_tl_training_datasets(cfg, paths):
@@ -246,6 +271,38 @@ def override_config(cfg, args):
         if value is not None:
             recursive_set(cfg, key, value)
     return cfg
+
+import torch.nn.functional as F
+
+@torch.no_grad()
+def mining_stats(emb, labels, margin: float):
+    """Compute % of anchors violating the margin (active triplets)."""
+    emb = emb / (emb.norm(p=2, dim=1, keepdim=True) + 1e-12)  # L2 norm
+    D = 1.0 - emb @ emb.t()  # cosine distance in [0,2]
+
+    same = labels[:, None].eq(labels[None, :])
+    eye = torch.eye(len(labels), device=labels.device, dtype=torch.bool)
+
+    pos_mask = same & (~eye)
+    neg_mask = ~same
+
+    # hardest positive and negative per anchor
+    pos = (D * pos_mask.float())
+    pos[pos_mask == 0] = -1.0
+    hardest_pos = pos.max(dim=1).values
+
+    Dn = D.clone()
+    Dn[neg_mask == 0] = 1e9
+    hardest_neg = Dn.min(dim=1).values
+
+    delta = hardest_pos - hardest_neg + margin
+    active = (delta > 0).float()
+
+    valid = (hardest_pos > -0.5) & (hardest_neg < 1e8)
+    if valid.any():
+        return active[valid].mean().item() * 100.0  # percentage
+    else:
+        return float("nan")
 
     
 if __name__ == "__main__":

@@ -82,18 +82,18 @@ def crop_images(loss_map, loader, mean, std, cfg):
             K_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))     # fuse close fragments
             mask = cv2.dilate(mask, K_dil, iterations=1)
 
-            boxes = components_to_bboxes(mask, min_area=700, ignore_border=True)
+            boxes = components_to_bboxes(mask, min_area=cfg.box_min_area, ignore_border=True)
             # Run NMS
             scores = get_box_scores(boxes, hm_z, mode='mean')
-            score_thr = 0.1 # confidence threshold
-            nms_thr   = 0.4
+            score_thr = cfg.conf_score # confidence threshold
+            nms_thr   = cfg.nms_thr
             indices = cv2.dnn.NMSBoxes(boxes, scores, score_thr, nms_thr)
             if len(indices) > 0:
                 indices = indices.flatten()
                 boxes = [boxes[i] for i in indices]
 
-            boxes = expand_boxes(boxes, H, W, expand_ratio=0.1)  # set 0.0 to disable
-            boxes = remove_nested_boxes(boxes, tolerance=0.7)
+            boxes = expand_boxes(boxes, H, W, expand_ratio=cfg.expand_box)  # set 0.0 to disable
+            boxes = remove_nested_boxes(boxes, tolerance=cfg.tolerance)
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
 
@@ -131,6 +131,14 @@ def load_args():
     p.add_argument("--tl_path", required=True, type=str, help="Triplet model path")
     p.add_argument("--calibration", required=True, type=str, help="Calibration path")
     p.add_argument("--emd_gal", required=True, type=str, help="Saved embeddings gallery")
+    
+    p.add_argument("--box_min_area", required=False, default=600, type=int, help="Minimum box area")
+    p.add_argument("--conf_score", required=False, default=0.1, type=float, help="Minimum box area")
+    p.add_argument("--nms_thr", required=False, default=0.4, type=float, help="Minimum box area")
+    p.add_argument("--expand_box", required=False, default=0.1, type=float, help="Minimum box area")
+    p.add_argument("--tolerance", required=False, default=0.7, type=float, help="Minimum box area")
+
+
 
     args = p.parse_args()
     return args

@@ -131,7 +131,7 @@ def plot_tsne(embs, labels, cfg):
         plt.xlabel("t-SNE 1"); plt.ylabel("t-SNE 2")
         plt.legend(title="Label", frameon=True)
         plt.tight_layout()
-        # plt.savefig(save_path, bbox_inches="tight")
+        plt.savefig('TSNE_triplet.png', bbox_inches="tight")
         plt.close()
     elif dim == 3:
         fig = plt.figure(figsize=(8, 6), dpi=120)
