@@ -203,14 +203,15 @@ def load_tl_training_datasets(cfg, paths):
     
     train_dataset = torch.utils.data.ConcatDataset([train_ok_ds, train_notok_ds])
     val_dataset   = torch.utils.data.ConcatDataset([val_ok_ds, val_notok_ds])
-    
+    len_ok = len(val_ok_ds)
+    len_ng = len(val_notok_ds)
+    val_sampler = StratifiedTwoClassBatchSampler(len_ok=len_ok, len_ng=len_ng, batch_size=cfg.batch_size, drop_last=False)   
     BATCH_SIZE = cfg.batch_size
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE,
                               shuffle=True, drop_last=True, num_workers=4, pin_memory=True)
     print("Train dataset loaded")
-    val_loader   = DataLoader(val_dataset, batch_size=BATCH_SIZE,
-                              shuffle=False, drop_last=False, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_sampler=val_sampler, num_workers=4, pin_memory=True)
     print("Validation dataset loaded")
     print("Triplet datasets loading completed.")
     return train_loader, val_loader
@@ -303,6 +304,35 @@ def mining_stats(emb, labels, margin: float):
         return active[valid].mean().item() * 100.0  # percentage
     else:
         return float("nan")
+
+from torch.utils.data import Sampler
+
+class StratifiedTwoClassBatchSampler(Sampler):
+    """Yields indices for batches containing half OK and half NOT_OK."""
+    def __init__(self, len_ok, len_ng, batch_size, drop_last=False):
+        assert batch_size % 2 == 0, "Use even batch_size"
+        self.len_ok, self.len_ng = len_ok, len_ng
+        self.bs = batch_size
+        self.drop_last = drop_last
+        self.ok_idx = list(range(0, len_ok))
+        self.ng_idx = list(range(len_ok, len_ok+len_ng))
+
+    def __iter__(self):
+        ok = self.ok_idx[:]
+        ng = self.ng_idx[:]
+        random.shuffle(ok); random.shuffle(ng)
+        i = j = 0
+        while i + self.bs//2 <= len(ok) and j + self.bs//2 <= len(ng):
+            batch = ok[i:i+self.bs//2] + ng[j:j+self.bs//2]
+            random.shuffle(batch)
+            yield batch
+            i += self.bs//2; j += self.bs//2
+        if not self.drop_last:
+            # handle remainders (optional: top-up with random)
+            pass
+
+    def __len__(self):
+        return min(self.len_ok, self.len_ng) * 2 // self.bs
 
     
 if __name__ == "__main__":
