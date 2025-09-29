@@ -91,7 +91,6 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
                 y = y.cuda(non_blocking=True)
 
                 z = model(x)
-                z = F.normalize(z, p=2, dim=1)
 
                 a, p, n = mine_batch_hard(z, y, MARGIN)
                 if len(a) == 0:

@@ -250,10 +250,6 @@ def mine_batch_hard(emb, labels, margin):
         emb[a_idx], emb[p_idx], emb[n_idx]
     """
 
-    # ---- STEP 1: Normalize embeddings ----
-    # Cosine similarity only makes sense if vectors are normalized.
-    emb = F.normalize(emb, p=2, dim=1)
-
     # Cosine similarity matrix: sim[i,j] = cos_sim(emb[i], emb[j])
     sim  = emb @ emb.t()   # [B,B]
 
@@ -264,7 +260,7 @@ def mine_batch_hard(emb, labels, margin):
     # Lists to hold the triplet indices
     a_idx, p_idx, n_idx = [], [], []
 
-    # ---- STEP 2: Loop over every sample as anchor ----
+    # ---- STEP 1: Loop over every sample as anchor ----
     for i in range(len(emb)):
         # Identify same-class samples (positives) and different-class samples (negatives)
         same = (labels == labels[i])    # Boolean mask of positives
@@ -277,8 +273,8 @@ def mine_batch_hard(emb, labels, margin):
             continue  # skip if we can't form a triplet
 
         # ---- STEP 3: Choose the positive ----
-        # pj = pos[torch.argmax(dist[i, pos])]
-        pj = pos[torch.argmin(dist[i, pos])]  
+        pj = pos[torch.argmax(dist[i, pos])]
+        # pj = pos[torch.argmin(dist[i, pos])]  
 
         # ---- STEP 4: Choose the negative ----
         # Prefer "semi-hard" negatives if possible:
@@ -286,15 +282,15 @@ def mine_batch_hard(emb, labels, margin):
         # - But not *too* far (still within the margin band).
         band = (dist[i, neg] > dist[i, pj]) & (dist[i, neg] < dist[i, pj] + margin)
 
-        # if torch.any(band):
-        #     # If we found semi-hard negatives, pick one randomly
-        #     cand = neg[band]
-        #     nj   = cand[torch.randint(len(cand), (1,)).item()]
-        # else:
-        #     # Otherwise, fallback: pick the *hardest* negative,
-        #     # i.e. the one closest to the anchor (minimum distance).
-        #     nj = neg[torch.argmin(dist[i, neg])]
-        nj = neg[torch.argmin(dist[i, neg])]  # batch-hard negative
+        if torch.any(band):
+            # If we found semi-hard negatives, pick one randomly
+            cand = neg[band]
+            nj   = cand[torch.randint(len(cand), (1,)).item()]
+        else:
+            # Otherwise, fallback: pick the *hardest* negative,
+            # i.e. the one closest to the anchor (minimum distance).
+            nj = neg[torch.argmin(dist[i, neg])]
+        # nj = neg[torch.argmin(dist[i, neg])]  # batch-hard negative
 
         # ---- STEP 5: Store the triplet indices ----
         a_idx.append(i)

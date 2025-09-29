@@ -92,7 +92,7 @@ def crop_images(loss_map, loader, mean, std, cfg):
                 indices = indices.flatten()
                 boxes = [boxes[i] for i in indices]
 
-            boxes = expand_boxes(boxes, H, W, expand_ratio=0.0)  # set 0.0 to disable
+            boxes = expand_boxes(boxes, H, W, expand_ratio=0.1)  # set 0.0 to disable
             boxes = remove_nested_boxes(boxes, tolerance=0.7)
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
