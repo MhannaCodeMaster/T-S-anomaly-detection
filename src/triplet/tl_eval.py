@@ -8,6 +8,7 @@ from torchvision import transforms
 import numpy as np
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
+from torch.utils.data import Sampler
 
 from src.data.data_utils import *
 from src.triplet.triplet import TripletEmbedder
@@ -79,17 +80,13 @@ def load_val_crops(args, img_size=224, num_workers=4, pin_memory=True):
     val_ok_ds    = PatchDataset(val_ok_df,    val_tf, "ok",      crops_root=dataset_root)
     val_notok_ds = PatchDataset(val_notok_df, val_tf, "not_ok",  crops_root=dataset_root)
     val_dataset  = torch.utils.data.ConcatDataset([val_ok_ds, val_notok_ds])
-
+    
+    len_ok = len(val_ok_ds)
+    len_ng = len(val_notok_ds)
+    val_sampler = StratifiedTwoClassBatchSampler(len_ok=len_ok, len_ng=len_ng, batch_size=args.batch_size, drop_last=False)
+    
     # 6) DataLoader
-    bs =  args.batch_size
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=bs,
-        shuffle=False,
-        drop_last=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory
-    )
+    val_loader = DataLoader(val_dataset, batch_sampler=val_sampler, num_workers=4, pin_memory=True)
 
     print(f"[val] parents={len(val_parents)} | crops={len(val_df)} | ok={len(val_ok_df)} | not_ok={len(val_notok_df)}")
     return val_loader, val_dataset, val_df       
@@ -147,3 +144,31 @@ def plot_tsne(embs, labels, cfg):
         plt.close(fig)
     else:
         raise ValueError("dim must be 2 or 3")
+
+
+class StratifiedTwoClassBatchSampler(Sampler):
+    """Yields indices for batches containing half OK and half NOT_OK."""
+    def __init__(self, len_ok, len_ng, batch_size, drop_last=False):
+        assert batch_size % 2 == 0, "Use even batch_size"
+        self.len_ok, self.len_ng = len_ok, len_ng
+        self.bs = batch_size
+        self.drop_last = drop_last
+        self.ok_idx = list(range(0, len_ok))
+        self.ng_idx = list(range(len_ok, len_ok+len_ng))
+
+    def __iter__(self):
+        ok = self.ok_idx[:]
+        ng = self.ng_idx[:]
+        random.shuffle(ok); random.shuffle(ng)
+        i = j = 0
+        while i + self.bs//2 <= len(ok) and j + self.bs//2 <= len(ng):
+            batch = ok[i:i+self.bs//2] + ng[j:j+self.bs//2]
+            random.shuffle(batch)
+            yield batch
+            i += self.bs//2; j += self.bs//2
+        if not self.drop_last:
+            # handle remainders (optional: top-up with random)
+            pass
+
+    def __len__(self):
+        return min(self.len_ok, self.len_ng) * 2 // self.bs
