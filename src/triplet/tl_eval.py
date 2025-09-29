@@ -143,7 +143,7 @@ def plot_tsne(embs, labels, cfg):
         ax.set_xlabel("t-SNE 1"); ax.set_ylabel("t-SNE 2"); ax.set_zlabel("t-SNE 3")
         ax.legend(title="Label")
         fig.tight_layout()
-        # fig.savefig(save_path, bbox_inches="tight")
+        fig.savefig('TSNE_triplet.png', bbox_inches="tight")
         plt.close(fig)
     else:
         raise ValueError("dim must be 2 or 3")
