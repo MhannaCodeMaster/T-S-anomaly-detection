@@ -33,6 +33,8 @@ def main():
    
 def train_triplet(model , train_loader, val_loader, cfg, paths):
     print("Starting triplet learning...")
+
+    #----------- CONFIG -----------#
     CATEGORY = cfg.category
     TOTAL_EPOCHS = int(cfg.epochs)
     MARGIN = float(cfg.margin)
@@ -40,7 +42,6 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     WGT_DECAY = float(cfg.weight_decay)
     TRIPLETPATH = paths.checkpoint
 
-    current_margin = float(cfg.margin)            # e.g., start at 0.5
     M_MIN, M_MAX = 0.30, 0.80                     # safer clamp than 0.2
     STEP = 0.05
     EMA_BETA = 0.8                                 # 0.0=raw, 0.8=quite smooth
@@ -52,7 +53,6 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     train_active_sum, train_batches = 0.0, 0
     val_active_sum, val_batches = 0.0, 0
 
-    
     model.train()
     min_err = 10000 # Stores the best validation error so far.
     best_model = None
@@ -61,7 +61,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TOTAL_EPOCHS)
     triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
         distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
-        margin=current_margin)
+        margin=MARGIN)
     
     for epoch in range(TOTAL_EPOCHS):
         model.train()
@@ -149,10 +149,10 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
 
         if cooldown == 0:
             if ema_val_active < TARGET_LOW:
-                current_margin = min(M_MAX, current_margin + STEP)
+                MARGIN = min(M_MAX, MARGIN + STEP)
                 cooldown = COOLDOWN_EPOCHS
             elif ema_val_active > TARGET_HIGH:
-                current_margin = max(M_MIN, current_margin - STEP)
+                MARGIN = max(M_MIN, MARGIN - STEP)
                 cooldown = COOLDOWN_EPOCHS
         else:
             cooldown -= 1
@@ -160,7 +160,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         # rebuild the loss each epoch with updated margin
         triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
             distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
-            margin=current_margin
+            margin=MARGIN
         )
 
         print(
@@ -168,8 +168,8 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             f"- train_loss={avg_loss:.4f} - train_triplets={total_triplets} "
             f"- train_active={train_active:.1f}% "
             f"- val_loss={val_avg_loss:.4f} - val_triplets={val_total_triplets} "
-            f"- val_active={val_active:.1f}%"
-            f"- margin={MARGIN}"
+            f"- val_active={val_active:.1f}% "
+            f"- margin={MARGIN:.4f}"
         )
  
     print("Triplet learning completed.")
