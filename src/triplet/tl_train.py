@@ -40,8 +40,14 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     WGT_DECAY = float(cfg.weight_decay)
     TRIPLETPATH = paths.checkpoint
 
-    TARGET_LOW, TARGET_HIGH = 0.25, 0.35
+    current_margin = float(cfg.margin)            # e.g., start at 0.5
+    M_MIN, M_MAX = 0.30, 0.80                     # safer clamp than 0.2
     STEP = 0.05
+    EMA_BETA = 0.8                                 # 0.0=raw, 0.8=quite smooth
+    TARGET_LOW, TARGET_HIGH = 0.30, 0.40          # 30–40% active is healthy
+    COOLDOWN_EPOCHS = 3
+    cooldown = 0
+    ema_val_active = None
     
     train_active_sum, train_batches = 0.0, 0
     val_active_sum, val_batches = 0.0, 0
@@ -55,7 +61,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TOTAL_EPOCHS)
     triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
         distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
-        margin=MARGIN)
+        margin=current_margin)
     
     for epoch in range(TOTAL_EPOCHS):
         model.train()
@@ -136,14 +142,26 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         train_active = train_active_sum / max(1, train_batches)
         val_active   = val_active_sum   / max(1, val_batches)
 
-        if val_active < TARGET_LOW:
-            MARGIN = min(MARGIN + STEP, 1.0)
-        elif val_active > TARGET_HIGH:
-            MARGIN = max(MARGIN - STEP, 0.2)
+        if ema_val_active is None:
+            ema_val_active = val_active
+        else:
+            ema_val_active = EMA_BETA * ema_val_active + (1 - EMA_BETA) * val_active
 
+        if cooldown == 0:
+            if ema_val_active < TARGET_LOW:
+                current_margin = min(M_MAX, current_margin + STEP)
+                cooldown = COOLDOWN_EPOCHS
+            elif ema_val_active > TARGET_HIGH:
+                current_margin = max(M_MIN, current_margin - STEP)
+                cooldown = COOLDOWN_EPOCHS
+        else:
+            cooldown -= 1
+
+        # rebuild the loss each epoch with updated margin
         triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
             distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
-            margin=MARGIN)
+            margin=current_margin
+        )
 
         print(
             f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] "
