@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import torch
 from torchvision import transforms
-
+import torchvision.transforms.functional as TF
+import random
 from sklearn.metrics import roc_auc_score, average_precision_score, f1_score
 
 
@@ -233,7 +234,7 @@ def load_tl_training_datasets(cfg, paths):
         transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8)),
         RandomGaussianNoise(sigma=(0.0, 0.02), p=0.3),
         transforms.ToTensor(),
-        normalize,
+        transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
     ])
 
     val_tf = transforms.Compose([
