@@ -49,9 +49,21 @@ def main():
     print('Image used:', image_paths)
     res = triplet_classifer(triplet, transform, boxes, image_paths, crops, args)
 
-def crop_images(loss_map, loader, mean, std, cfg):
+def crop_images(loss_map, loader, mean, std, args):
     print("Starting cropping images...",end='\n')  
     total = len(loader.dataset)
+
+    #--------- CONFIG -----------#
+    CATEGORY = args.category
+    GAP_PX = args.merge_gap  # or use args.merge_gap if you add it
+    HM_THR = args.h_th
+    BOX_MIN_AREA = args.box_min_area
+    SCRORE_THR = args.conf_score # confidence threshold
+    NMS_THR   = args.nms_thr
+    EXPAND_BOX = args.expand_box
+    TOLERANCE = args.tolerance
+    #----------------------------#
+
     print(f"images processed: [0/{total}]",end="\r")
     idx = 0
     orig_img_path = []
@@ -75,8 +87,8 @@ def crop_images(loss_map, loader, mean, std, cfg):
             hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             
-            mask, thr = threshold_heatmap(hm_z, method='percentile', percentile=cfg.h_th)
-            # clean mask
+            mask, thr = threshold_heatmap(hm_z, method='percentile', percentile=HM_THR)
+            #----------- clean mask -----------#
             K_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))    # remove salt-noise
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, K_open)
 
@@ -86,29 +98,30 @@ def crop_images(loss_map, loader, mean, std, cfg):
             K_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, K_close)  # joins nearby blobs
 
+            #----------- Building boxes from mask ------------#
+            boxes = components_to_bboxes(mask, min_area=BOX_MIN_AREA, ignore_border=True)
 
-
-            boxes = components_to_bboxes(mask, min_area=cfg.box_min_area, ignore_border=True)
-            # Run NMS
+            #----------- Applying NMS algo -----------#
             scores = get_box_scores(boxes, hm_z, mode='mean')
-            score_thr = cfg.conf_score # confidence threshold
-            nms_thr   = cfg.nms_thr
-            indices = cv2.dnn.NMSBoxes(boxes, scores, score_thr, nms_thr)
+            indices = cv2.dnn.NMSBoxes(boxes, scores, SCRORE_THR, NMS_THR)
             if len(indices) > 0:
                 indices = indices.flatten()
                 boxes = [boxes[i] for i in indices]
 
-            boxes = expand_boxes(boxes, H, W, expand_ratio=cfg.expand_box)  # set 0.0 to disable
-            gap_px = max(1, int(0.01 * min(H, W)))  # or use cfg.merge_gap if you add it
-            boxes = merge_touching_boxes_xywh(boxes, gap=gap_px, iou_thr=0.0, max_iters=5)
-            boxes = remove_nested_boxes(boxes, tolerance=cfg.tolerance)
+            #----------- Modifying boxes --------------#
+            boxes = expand_boxes(boxes, H, W, expand_ratio=EXPAND_BOX)  # set 0.0 to disable
+            boxes = remove_nested_boxes(boxes, tolerance=TOLERANCE)
+            boxes = merge_touching_boxes_xywh(boxes, gap=GAP_PX, iou_thr=0.0, max_iters=5)
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
 
             stem = Path(p).stem
             defect = Path(p).parent.name
 
-            base_eval = "/kaggle/working/eval"
+            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            runtime = f"{ts}_{CATEGORY.lower()}"
+
+            base_eval = f"/kaggle/working/eval/{CATEGORY.lower()}/{runtime}"
             os.makedirs(os.path.join(base_eval, "crops"), exist_ok=True)
             os.makedirs(os.path.join(base_eval, "images"), exist_ok=True)
 
@@ -117,15 +130,15 @@ def crop_images(loss_map, loader, mean, std, cfg):
                 x0, y0, x1, y1 = pad_box(x,y,w,h,H,W,pad_ratio=0.05)
                 crop = img[y0:y1, x0:x1]
                 crops.append(crop)
-                cv2.imwrite(os.path.join('/kaggle/working/eval/crops', f"{defect}_{stem}_box{bi}.png"), crop)
+                cv2.imwrite(os.path.join(f'{base_eval}/crops', f"{defect}_{stem}_box{bi}.png"), crop)
             
-            cv2.imwrite(os.path.join('/kaggle/working/eval/images', f"{defect}_{stem}_orig.png"), img)
-            cv2.imwrite(os.path.join('/kaggle/working/eval/images', f"{defect}_{stem}_overlay.png"), overlay)
-            cv2.imwrite(os.path.join('/kaggle/working/eval/images', f"{defect}_{stem}_mask.png"), mask)
-            cv2.imwrite(os.path.join('/kaggle/working/eval/images', f"{defect}_{stem}_boxes.png"), boxes_vis)
+            cv2.imwrite(os.path.join(f'{base_eval}/images', f"{defect}_{stem}_orig.png"), img)
+            cv2.imwrite(os.path.join(f'{base_eval}/images', f"{defect}_{stem}_overlay.png"), overlay)
+            cv2.imwrite(os.path.join(f'{base_eval}/images', f"{defect}_{stem}_mask.png"), mask)
+            cv2.imwrite(os.path.join(f'{base_eval}/images', f"{defect}_{stem}_boxes.png"), boxes_vis)
             print(f"images processed: [{idx + k + 1}/{total}]", end="\r")
         idx += bs
-                   
+
     print("\nCropping images completed.",end="\n")
     return crops, boxes, orig_img_path
 
@@ -141,12 +154,11 @@ def load_args():
     p.add_argument("--emd_gal", required=True, type=str, help="Saved embeddings gallery")
     
     p.add_argument("--box_min_area", required=False, default=600, type=int, help="Minimum box area")
-    p.add_argument("--conf_score", required=False, default=0.1, type=float, help="Minimum box area")
-    p.add_argument("--nms_thr", required=False, default=0.4, type=float, help="Minimum box area")
-    p.add_argument("--expand_box", required=False, default=0.1, type=float, help="Minimum box area")
-    p.add_argument("--tolerance", required=False, default=0.7, type=float, help="Minimum box area")
-
-
+    p.add_argument("--conf_score", required=False, default=0.1, type=float, help="Confidence score")
+    p.add_argument("--nms_thr", required=False, default=0.4, type=float, help="NMS threshold")
+    p.add_argument("--expand_box", required=False, default=0.1, type=float, help="Expand box %")
+    p.add_argument("--tolerance", required=False, default=0.7, type=float, help="Box tolerance")
+    p.add_argument("--merge_gap", required=False, default=1, type=float, help="Merge gap between boxes")
 
     args = p.parse_args()
     return args
