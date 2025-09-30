@@ -39,6 +39,9 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     LR = float(cfg.lr)
     WGT_DECAY = float(cfg.weight_decay)
     TRIPLETPATH = paths.checkpoint
+
+    TARGET_LOW, TARGET_HIGH = 0.25, 0.35
+    STEP = 0.05
     
     train_active_sum, train_batches = 0.0, 0
     val_active_sum, val_batches = 0.0, 0
@@ -133,12 +136,22 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         train_active = train_active_sum / max(1, train_batches)
         val_active   = val_active_sum   / max(1, val_batches)
 
+        if val_active < TARGET_LOW:
+            MARGIN = min(MARGIN + STEP, 1.0)
+        elif val_active > TARGET_HIGH:
+            MARGIN = max(MARGIN - STEP, 0.2)
+
+        triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
+            distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
+            margin=MARGIN)
+
         print(
             f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] "
             f"- train_loss={avg_loss:.4f} - train_triplets={total_triplets} "
             f"- train_active={train_active:.1f}% "
             f"- val_loss={val_avg_loss:.4f} - val_triplets={val_total_triplets} "
             f"- val_active={val_active:.1f}%"
+            f"- margin={MARGIN}"
         )
  
     print("Triplet learning completed.")
