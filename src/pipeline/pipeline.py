@@ -55,6 +55,7 @@ def crop_images(loss_map, loader, mean, std, args):
 
     #--------- CONFIG -----------#
     CATEGORY = args.category
+    ENABLE_BOX_MERGE = args.merge_box
     GAP_PX = args.merge_gap  # or use args.merge_gap if you add it
     HM_THR = args.h_th
     BOX_MIN_AREA = args.box_min_area
@@ -111,7 +112,8 @@ def crop_images(loss_map, loader, mean, std, args):
             #----------- Modifying boxes --------------#
             boxes = expand_boxes(boxes, H, W, expand_ratio=EXPAND_BOX)  # set 0.0 to disable
             boxes = remove_nested_boxes(boxes, tolerance=TOLERANCE)
-            boxes = merge_touching_boxes_xywh(boxes, gap=GAP_PX, iou_thr=0.0, max_iters=5)
+            if ENABLE_BOX_MERGE == "1":
+                boxes = merge_touching_boxes_xywh(boxes, gap=GAP_PX, iou_thr=0.0, max_iters=5)
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
 
@@ -159,6 +161,7 @@ def load_args():
     p.add_argument("--expand_box", required=False, default=0.1, type=float, help="Expand box %")
     p.add_argument("--tolerance", required=False, default=0.7, type=float, help="Box tolerance")
     p.add_argument("--merge_gap", required=False, default=1, type=float, help="Merge gap between boxes")
+    p.add_argument("--merge_box", required=False, default=0, type=str, help="Enable merge boxes (0 or 1)")
 
     args = p.parse_args()
     return args
