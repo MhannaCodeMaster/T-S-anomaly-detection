@@ -155,6 +155,7 @@ def load_args():
     p.add_argument("--calibration", required=True, type=str, help="Calibration path")
     p.add_argument("--emd_gal", required=True, type=str, help="Saved embeddings gallery")
     
+    p.add_argument("--pred_thr", required=False, default=0.8, type=float, help="triplet model prediction threshold")
     p.add_argument("--box_min_area", required=False, default=600, type=int, help="Minimum box area")
     p.add_argument("--conf_score", required=False, default=0.1, type=float, help="Confidence score")
     p.add_argument("--nms_thr", required=False, default=0.4, type=float, help="NMS threshold")
@@ -196,8 +197,9 @@ def embed_crops(model, crops, transform, device="cuda"):
     z = F.normalize(z, p=2, dim=1)
     return z, x
 
-def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, thresh=0.8, device='cuda'):
+def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, device='cuda'):
     orig_image_path = image_paths[0]
+    PRED_THRESHOLD = args.pred_thr
     
     gal_pkg = torch.load(args.emd_gal, map_location='cpu', weights_only=False)
     Zg = gal_pkg["embeddings"]              # [N, D], L2-normalized
@@ -224,10 +226,10 @@ def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, th
     defect_frac = (w * (y_k == 1).float()).sum(dim=1)           # [B] in [0,1]
 
     # 4) Decide defect crops + image score
-    crop_preds = (defect_frac >= thresh).long().tolist()
+    crop_preds = (defect_frac >= PRED_THRESHOLD).long().tolist()
     crop_scores = defect_frac.tolist()
     image_score = float(defect_frac.max().item())
-    image_pred  = int(image_score >= thresh)
+    image_pred  = int(image_score >= PRED_THRESHOLD)
 
     # 5) Draw visualization
     img = cv2.imread(orig_image_path)
