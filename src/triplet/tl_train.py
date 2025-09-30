@@ -71,97 +71,95 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         model.train()
         total_loss, total_triplets, contrib_batches = 0.0, 0, 0
 
-        # ---- RESET per-epoch active% accumulators (important!) ----
+        # --- reset per-epoch stats ---
         train_active_sum, train_batches = 0.0, 0
         val_active_sum,   val_batches   = 0.0, 0
-        
-        # ---- Training ----
-        for x, y, _, _ in train_loader:
-            x = x.cuda()
-            y = y.cuda()
-            
-            z = model(x)  # embeddings are already normalized by your model
 
-            # if mining_stats returns fraction [0..1], multiply by 100 here.
-            act_pct = mining_stats(z.detach(), y, MARGIN)
+        # ---------- TRAIN ----------
+        for x, y, _, _ in train_loader:
+            x = x.cuda(); y = y.cuda()
+            z = model(x)  # already normalized
+
+            act_pct = mining_stats(z.detach(), y, MARGIN)  # returns e.g. 33.4 (%)
             train_active_sum += act_pct
-            train_batches    += 1
+            train_batches += 1
 
             a, p, n = mine_batch_hard(z.detach(), y, MARGIN)
-            if len(a) == 0:
-                continue
-            
+            if len(a) == 0: continue
+
             loss = triplet_loss(z[a], z[p], z[n])
-            
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
-            
-            total_loss     += loss.item()
+
+            total_loss += loss.item()
             total_triplets += len(a)
             contrib_batches += 1
-        
+
         sched.step()
         avg_loss = total_loss / max(1, contrib_batches)
-        
-        # ---- Validation ----
+
+        # ---------- VALID ----------
         model.eval()
-        val_total_loss, val_total_triplets, val_contrib_batches = 0.0, 0, 0
         with torch.no_grad():
+            # (A) collect ALL val embeddings to stabilize stats
+            all_z, all_y = [], []
+            val_total_loss, val_total_triplets, val_contrib_batches = 0.0, 0, 0
+
             for x, y, _, _ in val_loader:
-                x = x.cuda(non_blocking=True)
-                y = y.cuda(non_blocking=True)
-
-                z = model(x)   # normalized embeddings
-
-                # per-batch val active%
-                val_act_pct = mining_stats(z, y, MARGIN)   # if fraction, *100
-                val_active_sum += val_act_pct
-                val_batches    += 1
+                x = x.cuda(non_blocking=True); y = y.cuda(non_blocking=True)
+                z = model(x)
+                all_z.append(z)
+                all_y.append(y)
 
                 a, p, n = mine_batch_hard(z, y, MARGIN)
-                if len(a) == 0:
-                    continue
-
+                if len(a) == 0: continue
                 loss = triplet_loss(z[a], z[p], z[n])
-                val_total_loss     += loss.item()
+                val_total_loss += loss.item()
                 val_total_triplets += len(a)
                 val_contrib_batches += 1
 
+            # (B) compute active% ONCE over the whole val set
+            if all_z:
+                Z = torch.cat(all_z, dim=0)
+                Y = torch.cat(all_y, dim=0)
+                val_act_pct = mining_stats(Z, Y, MARGIN)  # returns e.g. 33.4 (%)
+                val_active_sum += val_act_pct
+                val_batches += 1
+
         val_avg_loss = val_total_loss / max(1, val_contrib_batches)
 
-        # ---- Best model & early stopping bookkeeping ----
+        # ----- best/early stop -----
         improved = (best_val_loss - val_avg_loss) > ES_MIN_DELTA
         if improved:
             best_val_loss = val_avg_loss
             es_bad_epochs = 0
-            best_model = {'category': CATEGORY, 'state_dict': model.state_dict()}
-            torch.save(best_model, os.path.join(TRIPLETPATH))
+            torch.save({'category': CATEGORY, 'state_dict': model.state_dict()}, os.path.join(TRIPLETPATH))
         else:
             es_bad_epochs += 1
 
-        # ---- Compute per-epoch active% (now truly per-epoch) ----
+        # epoch-level active% for logging (still percentages)
         train_active = train_active_sum / max(1, train_batches)
         val_active   = val_active_sum   / max(1, val_batches)
 
-        # ---- Adaptive margin control (EMA + band + cooldown) ----
+        # ----- adaptive margin (convert to FRACTION here) -----
+        val_active_frac = val_active / 100.0
         if ema_val_active is None:
-            ema_val_active = val_active
+            ema_val_active = val_active_frac
         else:
-            ema_val_active = EMA_BETA * ema_val_active + (1 - EMA_BETA) * val_active
+            ema_val_active = EMA_BETA * ema_val_active + (1 - EMA_BETA) * val_active_frac
 
         if cooldown == 0:
-            if ema_val_active < (TARGET_LOW * 100.0 if val_active > 1.0 else TARGET_LOW):
-                # if mining_stats already returns %, compare to 30 not 0.30
+            if ema_val_active < TARGET_LOW:
                 MARGIN = min(M_MAX, MARGIN + STEP)
                 cooldown = COOLDOWN_EPOCHS
-            elif ema_val_active > (TARGET_HIGH * 100.0 if val_active > 1.0 else TARGET_HIGH):
+            elif ema_val_active > TARGET_HIGH:
                 MARGIN = max(M_MIN, MARGIN - STEP)
                 cooldown = COOLDOWN_EPOCHS
         else:
             cooldown -= 1
 
-        # rebuild loss with updated margin
+        # rebuild loss with new margin
         triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
             distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
             margin=MARGIN
@@ -176,10 +174,11 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             f"- margin={MARGIN:.4f}"
         )
 
-        # ---- Early stopping check ----
+        # ----- early stopping -----
         if es_bad_epochs >= ES_PATIENCE:
             print(f"Early stopping: no val_loss improvement > {ES_MIN_DELTA} for {ES_PATIENCE} epochs.")
             break
+
 
     print("Triplet learning completed.")
 
