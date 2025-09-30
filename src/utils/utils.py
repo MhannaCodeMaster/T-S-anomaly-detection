@@ -298,3 +298,74 @@ def mine_batch_hard(emb, labels, margin):
         n_idx.append(nj.item())
 
     return a_idx, p_idx, n_idx
+
+def xywh_to_xyxy(box):
+    x, y, w, h = box
+    return (x, y, x + w, y + h)
+
+def xyxy_to_xywh(box):
+    x1, y1, x2, y2 = box
+    return (x1, y1, x2 - x1, y2 - y1)
+
+def merge_touching_boxes_xywh(boxes, gap=0, iou_thr=0.0, max_iters=5):
+    """
+    Merge boxes that intersect or are within `gap` pixels of touching.
+    boxes: list[(x,y,w,h)]  in image coordinates
+    gap:   extra tolerance (in pixels). Example: 2–6 px, or int(0.01*min(H,W))
+    iou_thr: also merge if IoU >= iou_thr (e.g., 0.0 merges any intersection)
+    max_iters: do multiple passes until stable or limit hit
+    """
+    if not boxes:
+        return boxes
+
+    # work in xyxy
+    cur = [xywh_to_xyxy(b) for b in boxes]
+
+    def _union(a, b):
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        return (min(ax1, bx1), min(ay1, by1), max(ax2, bx2), max(ay2, by2))
+
+    changed = True
+    it = 0
+    while changed and it < max_iters:
+        it += 1
+        changed = False
+        cur.sort(key=lambda b: (b[0], b[1], b[2], b[3]))  # mild determinism
+        merged = []
+        used = [False] * len(cur)
+
+        for i in range(len(cur)):
+            if used[i]:
+                continue
+            a = cur[i]
+            ax1, ay1, ax2, ay2 = a
+            group = a
+            used[i] = True
+
+            # try to absorb any overlapping / touching neighbors
+            j = i + 1
+            while j < len(cur):
+                if used[j]:
+                    j += 1
+                    continue
+                b = cur[j]
+                # quick reject by x projection when far apart to the right (speeds up)
+                if b[0] > group[2] + gap and iou(group, b) < iou_thr:
+                    # since sorted by x1, boxes ahead start even farther right
+                    j += 1
+                    continue
+
+                # merge condition: touch/near OR IoU ≥ threshold
+                if boxes_touch_or_near(group, b, gap=gap) or iou(group, b) >= iou_thr:
+                    group = _union(group, b)
+                    used[j] = True
+                    changed = True
+                j += 1
+
+            merged.append(group)
+
+        cur = merged
+
+    # back to xywh
+    return [xyxy_to_xywh(b) for b in cur]

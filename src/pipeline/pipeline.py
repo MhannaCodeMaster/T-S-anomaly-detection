@@ -83,6 +83,11 @@ def crop_images(loss_map, loader, mean, std, cfg):
             K_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))     # fuse close fragments
             mask = cv2.dilate(mask, K_dil, iterations=1)
 
+            K_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, K_close)  # joins nearby blobs
+
+
+
             boxes = components_to_bboxes(mask, min_area=cfg.box_min_area, ignore_border=True)
             # Run NMS
             scores = get_box_scores(boxes, hm_z, mode='mean')
@@ -94,6 +99,8 @@ def crop_images(loss_map, loader, mean, std, cfg):
                 boxes = [boxes[i] for i in indices]
 
             boxes = expand_boxes(boxes, H, W, expand_ratio=cfg.expand_box)  # set 0.0 to disable
+            gap_px = max(1, int(0.01 * min(H, W)))  # or use cfg.merge_gap if you add it
+            boxes = merge_touching_boxes_xywh(boxes, gap=gap_px, iou_thr=0.0, max_iters=5)
             boxes = remove_nested_boxes(boxes, tolerance=cfg.tolerance)
             
             boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
