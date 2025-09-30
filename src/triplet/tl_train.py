@@ -236,6 +236,14 @@ def load_tl_training_datasets(cfg, paths):
         transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
     ])
 
+    train_tf = transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        transforms.RandomHorizontalFlip(0.5),
+        transforms.RandomRotation(12, fill=0),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485,0.456,0.406], [0.229,0.224,0.225]),
+    ])
+
     val_tf = transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
