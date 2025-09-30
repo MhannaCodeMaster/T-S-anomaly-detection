@@ -35,75 +35,76 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     print("Starting triplet learning...")
 
     #----------- CONFIG -----------#
-    CATEGORY = cfg.category
+    CATEGORY     = cfg.category
     TOTAL_EPOCHS = int(cfg.epochs)
-    MARGIN = float(cfg.margin)
-    LR = float(cfg.lr)
-    WGT_DECAY = float(cfg.weight_decay)
-    TRIPLETPATH = paths.checkpoint
+    MARGIN       = float(cfg.margin)
+    LR           = float(cfg.lr)
+    WGT_DECAY    = float(cfg.weight_decay)
+    TRIPLETPATH  = paths.checkpoint
 
-    M_MIN, M_MAX = 0.30, 0.80                     # safer clamp than 0.2
-    STEP = 0.05
-    EMA_BETA = 0.8                                 # 0.0=raw, 0.8=quite smooth
-    TARGET_LOW, TARGET_HIGH = 0.30, 0.40          # 30–40% active is healthy
-    COOLDOWN_EPOCHS = 3
-    cooldown = 0
-    ema_val_active = None
-    
-    train_active_sum, train_batches = 0.0, 0
-    val_active_sum, val_batches = 0.0, 0
+    # adaptive-margin controller
+    M_MIN, M_MAX          = 0.30, 0.80
+    STEP                  = 0.05
+    EMA_BETA              = 0.8           # smoothing for val_active
+    TARGET_LOW, TARGET_HIGH = 0.30, 0.40  # we want ~30–40% active on val
+    COOLDOWN_EPOCHS       = 3
+    cooldown              = 0
+    ema_val_active        = None
+
+    # early stopping
+    ES_PATIENCE  = getattr(cfg, "es_patience", 10)       # epochs with no meaningful improvement
+    ES_MIN_DELTA = getattr(cfg, "es_min_delta", 1e-3)    # minimum improvement in val_loss
+    best_val_loss = float("inf")
+    es_bad_epochs = 0
 
     model.train()
-    min_err = 10000 # Stores the best validation error so far.
     best_model = None
     
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WGT_DECAY)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TOTAL_EPOCHS)
+    sched     = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TOTAL_EPOCHS)
     triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
         distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
-        margin=MARGIN)
+        margin=MARGIN
+    )
     
     for epoch in range(TOTAL_EPOCHS):
         model.train()
         total_loss, total_triplets, contrib_batches = 0.0, 0, 0
+
+        # ---- RESET per-epoch active% accumulators (important!) ----
+        train_active_sum, train_batches = 0.0, 0
+        val_active_sum,   val_batches   = 0.0, 0
         
-        # ---- Training START ----
+        # ---- Training ----
         for x, y, _, _ in train_loader:
-            # 1. Move data to GPU
             x = x.cuda()
             y = y.cuda()
             
-            # 2. Forward pass
-            z = model(x) # shape [B, D]
+            z = model(x)  # embeddings are already normalized by your model
 
+            # if mining_stats returns fraction [0..1], multiply by 100 here.
             act_pct = mining_stats(z.detach(), y, MARGIN)
-            
             train_active_sum += act_pct
-            train_batches += 1
+            train_batches    += 1
 
-            # 3. Mine triplets from the batch
             a, p, n = mine_batch_hard(z.detach(), y, MARGIN)
             if len(a) == 0:
-                continue # No valid triplets in the batch
+                continue
             
-            # 4. Compute triplet loss on the mined triplets
             loss = triplet_loss(z[a], z[p], z[n])
             
-            # 5. Backpropagation and optimization step
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
             
-            # 6. Track stats
-            total_loss += loss.item()
+            total_loss     += loss.item()
             total_triplets += len(a)
             contrib_batches += 1
         
         sched.step()
         avg_loss = total_loss / max(1, contrib_batches)
-        # ---- Training END ----
         
-        # ---- Validation (no grad) START ----
+        # ---- Validation ----
         model.eval()
         val_total_loss, val_total_triplets, val_contrib_batches = 0.0, 0, 0
         with torch.no_grad():
@@ -111,53 +112,56 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
                 x = x.cuda(non_blocking=True)
                 y = y.cuda(non_blocking=True)
 
-                z = model(x)
-                act_pct = mining_stats(z.detach(), y, MARGIN)
-                val_act_pct = mining_stats(z, y, MARGIN)
+                z = model(x)   # normalized embeddings
+
+                # per-batch val active%
+                val_act_pct = mining_stats(z, y, MARGIN)   # if fraction, *100
                 val_active_sum += val_act_pct
-                val_batches += 1
+                val_batches    += 1
 
                 a, p, n = mine_batch_hard(z, y, MARGIN)
                 if len(a) == 0:
                     continue
 
                 loss = triplet_loss(z[a], z[p], z[n])
-                val_total_loss += loss.item()
+                val_total_loss     += loss.item()
                 val_total_triplets += len(a)
                 val_contrib_batches += 1
 
-        # average over number of batches that produced triplets
         val_avg_loss = val_total_loss / max(1, val_contrib_batches)
-        # ---- Validation END ----
-        
-        # ---- Save best model ----
-        if val_total_triplets > 0 and val_avg_loss < min_err:
-            min_err = val_avg_loss
-            best_model = {
-                'category': CATEGORY,
-                "state_dict": model.state_dict()
-            }
+
+        # ---- Best model & early stopping bookkeeping ----
+        improved = (best_val_loss - val_avg_loss) > ES_MIN_DELTA
+        if improved:
+            best_val_loss = val_avg_loss
+            es_bad_epochs = 0
+            best_model = {'category': CATEGORY, 'state_dict': model.state_dict()}
             torch.save(best_model, os.path.join(TRIPLETPATH))
-        
+        else:
+            es_bad_epochs += 1
+
+        # ---- Compute per-epoch active% (now truly per-epoch) ----
         train_active = train_active_sum / max(1, train_batches)
         val_active   = val_active_sum   / max(1, val_batches)
 
+        # ---- Adaptive margin control (EMA + band + cooldown) ----
         if ema_val_active is None:
             ema_val_active = val_active
         else:
             ema_val_active = EMA_BETA * ema_val_active + (1 - EMA_BETA) * val_active
 
         if cooldown == 0:
-            if ema_val_active < TARGET_LOW:
+            if ema_val_active < (TARGET_LOW * 100.0 if val_active > 1.0 else TARGET_LOW):
+                # if mining_stats already returns %, compare to 30 not 0.30
                 MARGIN = min(M_MAX, MARGIN + STEP)
                 cooldown = COOLDOWN_EPOCHS
-            elif ema_val_active > TARGET_HIGH:
+            elif ema_val_active > (TARGET_HIGH * 100.0 if val_active > 1.0 else TARGET_HIGH):
                 MARGIN = max(M_MIN, MARGIN - STEP)
                 cooldown = COOLDOWN_EPOCHS
         else:
             cooldown -= 1
 
-        # rebuild the loss each epoch with updated margin
+        # rebuild loss with updated margin
         triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
             distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
             margin=MARGIN
@@ -171,8 +175,14 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             f"- val_active={val_active:.1f}% "
             f"- margin={MARGIN:.4f}"
         )
- 
+
+        # ---- Early stopping check ----
+        if es_bad_epochs >= ES_PATIENCE:
+            print(f"Early stopping: no val_loss improvement > {ES_MIN_DELTA} for {ES_PATIENCE} epochs.")
+            break
+
     print("Triplet learning completed.")
+
     
 def load_tl_training_datasets(cfg, paths):
     print("Loading triplet training datasets...")
