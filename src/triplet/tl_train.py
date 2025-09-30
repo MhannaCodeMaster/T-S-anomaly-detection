@@ -232,7 +232,6 @@ def load_tl_training_datasets(cfg, paths):
         transforms.RandomAutocontrast(p=0.2),
         transforms.RandomAdjustSharpness(sharpness_factor=1.5, p=0.2),
         transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8)),
-        RandomGaussianNoise(sigma=(0.0, 0.02), p=0.3),
         transforms.ToTensor(),
         transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
     ])
