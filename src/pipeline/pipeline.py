@@ -46,6 +46,7 @@ def main():
     mean, std = load_calibration_stats(args.calibration)
     test_err_map = get_error_map(teacher, student, test_loader)                
     crops, boxes, image_paths = crop_images(test_err_map, test_loader, mean, std, args)
+    print('Image used:', image_paths)
     res = triplet_classifer(triplet, transform, boxes, image_paths, crops, args)
 
 def crop_images(loss_map, loader, mean, std, cfg):
