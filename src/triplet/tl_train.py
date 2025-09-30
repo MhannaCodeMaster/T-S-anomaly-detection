@@ -222,13 +222,20 @@ def load_tl_training_datasets(cfg, paths):
     print("Val   OK:", len(val_ok_df),   "Val   NOT_OK:", len(val_notok_df))
     
     img_size = 224
-    train_tf = transforms.Compose([
-    transforms.Resize((img_size, img_size)),
-    transforms.RandomHorizontalFlip(0.5),
-    transforms.RandomRotation(12, fill=0),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485,0.456,0.406], [0.229,0.224,0.225]),
+    
+    train_ok_tf = transforms.Compose([
+        transforms.RandomResizedCrop(img_size, scale=(0.85, 1.0), ratio=(0.95, 1.05), antialias=True),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(10, interpolation=transforms.InterpolationMode.BILINEAR, fill=0),
+        transforms.ColorJitter(brightness=0.2, contrast=0.25, saturation=0.20, hue=0.02),
+        transforms.RandomAutocontrast(p=0.2),
+        transforms.RandomAdjustSharpness(sharpness_factor=1.5, p=0.2),
+        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8)),
+        RandomGaussianNoise(sigma=(0.0, 0.02), p=0.3),
+        transforms.ToTensor(),
+        normalize,
     ])
+
     val_tf = transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
@@ -236,7 +243,7 @@ def load_tl_training_datasets(cfg, paths):
     ])
     
     # Building the datasets
-    train_ok_ds    = PatchDataset(train_ok_df, train_tf, "ok", crops_root=cfg.dataset)
+    train_ok_ds    = PatchDataset(train_ok_df, train_ok_tf, "ok", crops_root=cfg.dataset)
     train_notok_ds = PatchDataset(train_notok_df, train_tf, "not_ok", crops_root=cfg.dataset)
     val_ok_ds      = PatchDataset(val_ok_df, val_tf, "ok", crops_root=cfg.dataset)
     val_notok_ds   = PatchDataset(val_notok_df, val_tf, "not_ok", crops_root=cfg.dataset)
