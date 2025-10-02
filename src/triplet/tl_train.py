@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import torch
 from torchvision import transforms
+from torchvision.transforms import InterpolationMode
 import torchvision.transforms.functional as TF
 import random
 from sklearn.metrics import roc_auc_score, average_precision_score, f1_score

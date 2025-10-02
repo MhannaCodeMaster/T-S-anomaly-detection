@@ -20,11 +20,11 @@ def main():
     
     print("Evaluating on category: ", args.category)
     try:
-        val_loader, _, _ = load_val_crops(args)
+        loader, _, _ = load_crops(args)
         model = TripletEmbedder(pretrained=False)
         model.cuda()
         model.load_state_dict(torch.load(args.model_path)['state_dict'])
-        emd, label = extract_embeddings(model, val_loader)
+        emd, label = extract_embeddings(model, loader)
         plot_tsne(emd, label, args)
     except Exception as e:
         print("Error has occured: ", e)
@@ -34,7 +34,7 @@ def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
     #----- Required args -----#
     p.add_argument("--dataset", required=True, type=str, help="Path to the folder crops with ok/not ok dataset root directory")
-    p.add_argument("--val_mainfest_path", required=True, type=str, help="Path to the folder containing val_parents.csv")
+    p.add_argument("--mainfest_path", required=True, type=str, help="Path to the folder containing parents.csv")
     p.add_argument("--model_path", required=True, type=str, help="Path to the trained triplet model")
     
     #----- Optional args -----#
@@ -47,8 +47,8 @@ def load_args():
 
 def load_crops(args, img_size=224, num_workers=4, pin_memory=True):
     """
-    Rebuild  crops using saved val_parents.csv under `paths.root`,
-    then return (val_loader, val_dataset, val_df) for evaluation (e.g., t-SNE).
+    Rebuild  crops using saved parents.csv under `paths.root`,
+    then return (loader, dataset, df) for evaluation (e.g., t-SNE).
     """
     dataset_root = args.dataset # path to your dataset root
     crops_dir = os.path.join(dataset_root, "crops")
@@ -58,18 +58,18 @@ def load_crops(args, img_size=224, num_workers=4, pin_memory=True):
     notok_df = pd.read_csv(os.path.join(crops_dir, "not_ok_manifest.csv"))
 
     # 2) Read validation parent IDs (saved during your split)
-    val_parents_path = os.path.join(args.val_mainfest_path, "train_parents.csv")
-    val_parents = set(pd.read_csv(val_parents_path)["parent_id"])
+    parents_path = os.path.join(args.mainfest_path, "train_parents.csv")
+    parents = set(pd.read_csv(parents_path)["parent_id"])
 
     # 3) Filter to validation crops only
-    val_ok_df    = ok_df[ok_df["parent_id"].isin(val_parents)].copy()
-    val_notok_df = notok_df[notok_df["parent_id"].isin(val_parents)].copy()
-    val_ok_df["label"] = "ok"
-    val_notok_df["label"] = "not_ok"
-    val_df = pd.concat([val_ok_df, val_notok_df], ignore_index=True)
+    ok_df    = ok_df[ok_df["parent_id"].isin(parents)].copy()
+    notok_df = notok_df[notok_df["parent_id"].isin(parents)].copy()
+    ok_df["label"] = "ok"
+    notok_df["label"] = "not_ok"
+    df = pd.concat([ok_df, notok_df], ignore_index=True)
 
     # 4) Transforms (match your training/eval normalization)
-    val_tf = transforms.Compose([
+    tf = transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
         transforms.Normalize([0.485,0.456,0.406], [0.229,0.224,0.225]),
@@ -77,19 +77,19 @@ def load_crops(args, img_size=224, num_workers=4, pin_memory=True):
 
     # 5) Build datasets exactly like your loader function does
     #    (keep per-class datasets if your PatchDataset expects class via arg)
-    val_ok_ds    = PatchDataset(val_ok_df,    val_tf, "ok",      crops_root=dataset_root)
-    val_notok_ds = PatchDataset(val_notok_df, val_tf, "not_ok",  crops_root=dataset_root)
-    val_dataset  = torch.utils.data.ConcatDataset([val_ok_ds, val_notok_ds])
+    ok_ds    = PatchDataset(ok_df,    tf, "ok",      crops_root=dataset_root)
+    notok_ds = PatchDataset(notok_df, tf, "not_ok",  crops_root=dataset_root)
+    dataset  = torch.utils.data.ConcatDataset([ok_ds, notok_ds])
     
-    len_ok = len(val_ok_ds)
-    len_ng = len(val_notok_ds)
-    val_sampler = StratifiedTwoClassBatchSampler(len_ok=len_ok, len_ng=len_ng, batch_size=args.batch_size, drop_last=False)
+    len_ok = len(ok_ds)
+    len_ng = len(notok_ds)
+    sampler = StratifiedTwoClassBatchSampler(len_ok=len_ok, len_ng=len_ng, batch_size=args.batch_size, drop_last=False)
     
     # 6) DataLoader
-    val_loader = DataLoader(val_dataset, batch_sampler=val_sampler, num_workers=4, pin_memory=True)
+    loader = DataLoader(dataset, batch_sampler=sampler, num_workers=4, pin_memory=True)
 
-    print(f"[train] parents={len(val_parents)} | crops={len(val_df)} | ok={len(val_ok_df)} | not_ok={len(val_notok_df)}")
-    return val_loader, val_dataset, val_df       
+    print(f"[train] parents={len(parents)} | crops={len(df)} | ok={len(ok_df)} | not_ok={len(notok_df)}")
+    return loader, dataset, df       
        
 @torch.no_grad()
 def extract_embeddings(model, loader, device="cuda"):
