@@ -197,52 +197,79 @@ def embed_crops(model, crops, transform, device="cuda"):
     z = F.normalize(z, p=2, dim=1)
     return z, x
 
-def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, device='cuda'):
+@torch.no_grad()
+def triplet_classifer(model, transform, boxes, image_paths, crops, args, k=5, device='cuda', tau=0.07):
+    """
+    - k: top-k neighbors
+    - tau: softmax temperature on cosine similarities (lower => sharper weights)
+    """
+    assert len(image_paths) > 0, "image_paths is empty"
     orig_image_path = image_paths[0]
-    PRED_THRESHOLD = args.pred_thr
-    
+    PRED_THRESHOLD = float(args.pred_thr)
+
+    # ---- Load gallery (embeddings must be L2-normalized already) ----
     gal_pkg = torch.load(args.emd_gal, map_location='cpu', weights_only=False)
-    Zg = gal_pkg["embeddings"]              # [N, D], L2-normalized
-    yg = gal_pkg["labels"]           # [N], 0=OK, 1=DEFECT
-    
-    Zg = torch.as_tensor(Zg, dtype=torch.float32)  # [N, D]
-    yg = torch.as_tensor(yg, dtype=torch.long)     # [N]  (0=OK, 1=DEFECT)
-    
+    Zg = torch.as_tensor(gal_pkg["embeddings"], dtype=torch.float32)  # [N,D]
+    yg = torch.as_tensor(gal_pkg["labels"], dtype=torch.long)         # [N] 0=OK, 1=DEFECT
+
+    # Extra safety: normalize once (no-op if already unit norm)
     Zg = torch.nn.functional.normalize(Zg, p=2, dim=1)
-    
-    z, x_tensor = embed_crops(model, crops, transform, device=device)  # z: [B,D]
-    Zg = Zg.to(device)
-    # k-NN against gallery (distance-weighted)
-    # 3) k-NN scoring (distance-weighted fraction of defect neighbors)
-    d   = torch.cdist(z, Zg)                                    # [B,N]
-    kk  = min(k, Zg.shape[0])
-    d_k, idx = torch.topk(d, k=kk, dim=1, largest=False)        # [B,kk]
-    
-    yg = yg.to(device)
-    y_k = yg[idx]                                               # [B,kk]
 
-    w = 1.0 / (d_k + 1e-6)
-    w = w / (w.sum(dim=1, keepdim=True) + 1e-6)
-    defect_frac = (w * (y_k == 1).float()).sum(dim=1)           # [B] in [0,1]
+    # ---- Embed all crops in one shot ----
+    model.eval()
+    z, x_tensor = embed_crops(model, crops, transform, device=device)   # z: [B,D], already unit-norm
 
-    # 4) Decide defect crops + image score
-    crop_preds = (defect_frac >= PRED_THRESHOLD).long().tolist()
+    # ---- Move gallery to device once ----
+    Zg = Zg.to(device, non_blocking=True)
+    yg = yg.to(device, non_blocking=True)
+
+    # ---- k-NN on cosine similarity (fast GEMM) ----
+    # sim[b, n] = z_b · Zg_n  in [-1, 1]
+    sim = z @ Zg.t()                                # [B,N]
+    kk = min(int(k), Zg.shape[0])
+    # top-k by similarity (largest first)
+    sim_k, idx = torch.topk(sim, k=kk, dim=1, largest=True, sorted=False)  # [B,kk]
+    y_k = yg[idx]                                     # [B,kk] labels of neighbors
+
+    # ---- Distance-to-defect score via softmax weights on similarity ----
+    # weights = softmax(sim_k / tau); defect_frac = sum(weights * 1_{defect})
+    w = torch.softmax(sim_k / tau, dim=1)             # [B,kk]
+    defect_mask = (y_k == 1).float()                  # [B,kk]
+    defect_frac = (w * defect_mask).sum(dim=1)        # [B] in [0,1]
+
+    # ---- One-class fallback (gallery has only OK) ----
+    if yg.max().item() == 0:
+        # Anomaly score: 1 - average(top-k sim mapped from [-1,1] -> [0,1])
+        # map: s01 = (sim+1)/2; higher sim => more normal; anomaly = 1 - mean(s01)
+        s01 = (sim_k.clamp(-1, 1) + 1.0) * 0.5
+        defect_frac = 1.0 - s01.mean(dim=1)
+
+    # ---- Crop and image decisions ----
     crop_scores = defect_frac.tolist()
+    crop_preds  = (defect_frac >= PRED_THRESHOLD).long().tolist()
     image_score = float(defect_frac.max().item())
     image_pred  = int(image_score >= PRED_THRESHOLD)
 
-    # 5) Draw visualization
+    # ---- Visualization ----
     img = cv2.imread(orig_image_path)
     if img is None:
         print(f"[warn] Could not read {orig_image_path} to draw boxes.")
+    else:
+        for (x, y, w_box, h_box), pred, score in zip(boxes, crop_preds, crop_scores):
+            color = (0, 0, 255) if pred == 1 else (0, 255, 0)  # red defect, green ok (BGR)
+            cv2.rectangle(img, (x, y), (x + w_box, y + h_box), color, 2)
+            cv2.putText(img, f"{score:.2f}", (x, max(0, y-5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        cv2.imwrite("result.png", img)
 
-    for (x, y, w, h), pred, score in zip(boxes, crop_preds, crop_scores):
-        color = (0, 0, 255) if pred == 1 else (0, 255, 0)  # red defect, green ok (BGR)
-        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(img, f"{score:.2f}", (x, max(0, y-5)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-
-    cv2.imwrite("result.png", img)
+    return {
+        "crop_scores": crop_scores,
+        "crop_preds": crop_preds,
+        "image_score": image_score,
+        "image_pred": image_pred,
+        "idx_topk": idx.detach().cpu().numpy(),
+        "sim_topk": sim_k.detach().cpu().numpy()
+    }
 
 
 if __name__ == '__main__':

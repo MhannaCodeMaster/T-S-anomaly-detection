@@ -20,7 +20,7 @@ def main():
     
     print("Evaluating on category: ", args.category)
     try:
-        loader, _, _ = load_crops(args)
+        loader, _, _, _ = load_crops(args)
         model = TripletEmbedder(pretrained=False)
         model.cuda()
         model.load_state_dict(torch.load(args.model_path)['state_dict'])
@@ -48,7 +48,7 @@ def load_args():
 def load_crops(args, img_size=224, num_workers=4, pin_memory=True):
     """
     Rebuild  crops using saved parents.csv under `paths.root`,
-    then return (loader, dataset, df) for evaluation (e.g., t-SNE).
+    then return (loader, dataset, df, ok_loader) for evaluation (e.g., t-SNE).
     """
     dataset_root = args.dataset # path to your dataset root
     crops_dir = os.path.join(dataset_root, "crops")
@@ -87,9 +87,10 @@ def load_crops(args, img_size=224, num_workers=4, pin_memory=True):
     
     # 6) DataLoader
     loader = DataLoader(dataset, batch_sampler=sampler, num_workers=4, pin_memory=True)
+    ok_loader = DataLoader(ok_ds, batch_size=args.batch_size, num_workers=4, pin_memory=True)
 
     print(f"[train] parents={len(parents)} | crops={len(df)} | ok={len(ok_df)} | not_ok={len(notok_df)}")
-    return loader, dataset, df       
+    return loader, dataset, df, ok_loader       
        
 @torch.no_grad()
 def extract_embeddings(model, loader, device="cuda"):
