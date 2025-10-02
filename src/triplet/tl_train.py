@@ -225,9 +225,6 @@ def load_tl_training_datasets(cfg, paths):
     img_size = 224
     
     train_ok_tf = transforms.Compose([
-        transforms.RandomResizedCrop(img_size, scale=(0.85, 1.0), ratio=(0.95, 1.05), antialias=True),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(10, interpolation=transforms.InterpolationMode.BILINEAR, fill=0),
         transforms.ColorJitter(brightness=0.2, contrast=0.25, saturation=0.20, hue=0.02),
         transforms.RandomAutocontrast(p=0.2),
         transforms.RandomAdjustSharpness(sharpness_factor=1.5, p=0.2),
