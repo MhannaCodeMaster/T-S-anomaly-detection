@@ -45,9 +45,9 @@ def load_args():
     args = p.parse_args()
     return args
 
-def load_val_crops(args, img_size=224, num_workers=4, pin_memory=True):
+def load_crops(args, img_size=224, num_workers=4, pin_memory=True):
     """
-    Rebuild validation crops using saved val_parents.csv under `paths.root`,
+    Rebuild  crops using saved val_parents.csv under `paths.root`,
     then return (val_loader, val_dataset, val_df) for evaluation (e.g., t-SNE).
     """
     dataset_root = args.dataset # path to your dataset root
@@ -58,7 +58,7 @@ def load_val_crops(args, img_size=224, num_workers=4, pin_memory=True):
     notok_df = pd.read_csv(os.path.join(crops_dir, "not_ok_manifest.csv"))
 
     # 2) Read validation parent IDs (saved during your split)
-    val_parents_path = os.path.join(args.val_mainfest_path, "val_parents.csv")
+    val_parents_path = os.path.join(args.val_mainfest_path, "train_parents.csv")
     val_parents = set(pd.read_csv(val_parents_path)["parent_id"])
 
     # 3) Filter to validation crops only
@@ -88,7 +88,7 @@ def load_val_crops(args, img_size=224, num_workers=4, pin_memory=True):
     # 6) DataLoader
     val_loader = DataLoader(val_dataset, batch_sampler=val_sampler, num_workers=4, pin_memory=True)
 
-    print(f"[val] parents={len(val_parents)} | crops={len(val_df)} | ok={len(val_ok_df)} | not_ok={len(val_notok_df)}")
+    print(f"[train] parents={len(val_parents)} | crops={len(val_df)} | ok={len(val_ok_df)} | not_ok={len(val_notok_df)}")
     return val_loader, val_dataset, val_df       
        
 @torch.no_grad()

@@ -10,7 +10,7 @@ def main():
     args = load_args()
     triplet = TripletEmbedder(pretrained=False)
     triplet.cuda()
-    val_loader, _, _ = load_val_crops(args)
+    val_loader, _, _ = load_crops(args)
     triplet.load_state_dict(torch.load(args.model_path)['state_dict'])
     emd, label = extract_embeddings(triplet, val_loader)
     

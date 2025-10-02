@@ -231,6 +231,30 @@ def load_tl_training_datasets(cfg, paths):
         transforms.RandomAutocontrast(p=0.2),
         transforms.RandomAdjustSharpness(sharpness_factor=1.5, p=0.2),
         transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8)),
+        # --- Zoom IN: crop a smaller area & resize back to 224x224
+        transforms.RandomApply([
+            transforms.RandomResizedCrop(
+                size=224,
+                scale=(0.70, 1.00),          # 70%..100% of area -> zoom-in
+                ratio=(0.90, 1.10),          # keep aspect near 1:1 for cables
+                interpolation=InterpolationMode.BILINEAR
+            )
+        ], p=0.50),
+
+        # --- Zoom OUT + slight shifts/rotations (center preserved)
+        transforms.RandomApply([
+            transforms.RandomAffine(
+                degrees=5,                   # small rotation
+                translate=(0.05, 0.05),      # up to ±5% shift
+                scale=(0.85, 1.25),          # <1 = zoom-in-ish; >1 = zoom-out
+                shear=None,
+                interpolation=InterpolationMode.BILINEAR,
+                fill=0                        # or tuple of means if you prefer
+            )
+        ], p=0.80),
+
+        # (Optional) Tiny perspective jitter if cables can bend
+        transforms.RandomApply([transforms.RandomPerspective(distortion_scale=0.15, p=1.0)], p=0.20),
         transforms.ToTensor(),
         transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
     ])
