@@ -10,9 +10,9 @@ def main():
     args = load_args()
     triplet = TripletEmbedder(pretrained=False)
     triplet.cuda()
-    _, _, _, ok_loader = load_crops(args)
+    loader, _, _, _ = load_crops(args)
     triplet.load_state_dict(torch.load(args.model_path)['state_dict'])
-    emd, label = extract_embeddings(triplet, ok_loader)
+    emd, label = extract_embeddings(triplet, loader)
     
     save_path = "gallery_embeddings.pt"
     torch.save({
