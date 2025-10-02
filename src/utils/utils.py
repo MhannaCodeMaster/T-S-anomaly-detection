@@ -240,7 +240,7 @@ def get_box_scores(boxes, hm, mode="mean"):
     return scores
 
 @torch.no_grad()
-def mine_batch_hard(emb, labels, margin):
+def mine_batch(emb, labels, margin):
     """
     emb:    [B, D] tensor of embeddings (batch size B, embedding dim D).
     labels: [B] tensor of class labels (0 = ok, 1 = not_ok).
@@ -250,6 +250,7 @@ def mine_batch_hard(emb, labels, margin):
         emb[a_idx], emb[p_idx], emb[n_idx]
     """
 
+    cap_percentile = 0.10
     # Cosine similarity matrix: sim[i,j] = cos_sim(emb[i], emb[j])
     sim  = emb @ emb.t()   # [B,B]
 
@@ -273,18 +274,27 @@ def mine_batch_hard(emb, labels, margin):
             continue  # skip if we can't form a triplet
 
         # ---- STEP 3: Choose the positive ----
-        # pj = pos[torch.argmax(dist[i, pos])]
-        pj = pos[torch.argmin(dist[i, pos])]  
+        pj = pos[torch.argmax(dist[i, pos])]
+        # pj = pos[torch.argmin(dist[i, pos])]  
 
         # ---- STEP 4: Choose the negative ----
-        band = (dist[i, neg] > dist[i, pj]) & (dist[i, neg] < dist[i, pj] + margin)
-        if torch.any(band):
-            nj = neg[band][torch.argmin(dist[i, neg][band])]
-        else: # instead of absolute hardest, pick a random mid-rank negative to avoid pathological cases
-            ranks = torch.argsort(dist[i, neg])
-            mid = ranks[len(ranks)//4 : 3*len(ranks)//4]
-            nj  = neg[mid[torch.randint(len(mid),(1,)).item()]] if len(mid) else neg[ranks[0]]
-        # nj = neg[torch.argmin(dist[i, neg])]  # batch-hard negative
+         # ------- semi-hard negative: d(a,n) in (d(a,p), d(a,p)+margin) -------
+        neg_ids   = torch.where(diff)[0]
+        neg_dists = dist[i, diff]
+        band = (neg_dists > dist[i, pj]) & (neg_dists < dist[i, pj] + margin)
+
+        if band.any():
+            # choose the closest semi-hard negative (tightest violation)
+            nj = neg_ids[torch.argmin(neg_dists[band])]
+        else:
+            # fallback: avoid pathologically hard outliers
+            # keep only closest k% negatives, then take argmin
+            if neg_dists.numel() > 0:
+                k = max(1, int(cap_percentile * neg_dists.numel()))
+                topk_vals, topk_idx = torch.topk(-neg_dists, k=k)  # largest(-d) == smallest(d)
+                nj = neg_ids[topk_idx[-1]]                          # farthest among the "closest k%" -> moderate hard
+            else:
+                continue
 
         # ---- STEP 5: Store the triplet indices ----
         a_idx.append(i)

@@ -53,7 +53,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     ema_val_active        = None
 
     # early stopping
-    ES_PATIENCE  = getattr(cfg, "es_patience", 10)       # epochs with no meaningful improvement
+    ES_PATIENCE  = getattr(cfg, "es_patience", 20)       # epochs with no meaningful improvement
     ES_MIN_DELTA = getattr(cfg, "es_min_delta", 1e-3)    # minimum improvement in val_loss
     best_val_loss = float("inf")
     es_bad_epochs = 0
@@ -85,7 +85,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             train_active_sum += act_pct
             train_batches += 1
 
-            a, p, n = mine_batch_hard(z.detach(), y, MARGIN)
+            a, p, n = mine_batch(z.detach(), y, MARGIN)
             if len(a) == 0: continue
 
             loss = triplet_loss(z[a], z[p], z[n])
@@ -108,14 +108,16 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             val_total_loss, val_total_triplets, val_contrib_batches = 0.0, 0, 0
 
             for x, y, _, _ in val_loader:
-                x = x.cuda(non_blocking=True); y = y.cuda(non_blocking=True)
+                x = x.cuda(non_blocking=True)
+                y = y.cuda(non_blocking=True)
                 z = model(x)
                 all_z.append(z)
                 all_y.append(y)
 
-                a, p, n = mine_batch_hard(z, y, MARGIN)
+                a, p, n = mine_batch(z, y, MARGIN)
                 if len(a) == 0: continue
                 loss = triplet_loss(z[a], z[p], z[n])
+                
                 val_total_loss += loss.item()
                 val_total_triplets += len(a)
                 val_contrib_batches += 1
@@ -142,9 +144,9 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         # epoch-level active% for logging (still percentages)
         train_active = train_active_sum / max(1, train_batches)
         val_active   = val_active_sum   / max(1, val_batches)
+        val_active_frac = val_active / 100.0
 
         # ----- adaptive margin (convert to FRACTION here) -----
-        val_active_frac = val_active / 100.0
         if ema_val_active is None:
             ema_val_active = val_active_frac
         else:
@@ -154,17 +156,13 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             if ema_val_active < TARGET_LOW:
                 MARGIN = min(M_MAX, MARGIN + STEP)
                 cooldown = COOLDOWN_EPOCHS
+                triplet_loss.margin = MARGIN
             elif ema_val_active > TARGET_HIGH:
                 MARGIN = max(M_MIN, MARGIN - STEP)
                 cooldown = COOLDOWN_EPOCHS
+                triplet_loss.margin = MARGIN
         else:
             cooldown -= 1
-
-        # rebuild loss with new margin
-        triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
-            distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
-            margin=MARGIN
-        )
 
         print(
             f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] "
@@ -331,34 +329,75 @@ def override_config(cfg, args):
 import torch.nn.functional as F
 
 @torch.no_grad()
-def mining_stats(emb, labels, margin: float):
-    """Compute % of anchors violating the margin (active triplets)."""
-    emb = emb / (emb.norm(p=2, dim=1, keepdim=True) + 1e-12)  # L2 norm
-    D = 1.0 - emb @ emb.t()  # cosine distance in [0,2]
+def mining_stats(emb, labels, margin: float, kth: int = 5):
+    """
+    % anchors violating (hardest positive vs kth-nearest negative) in cosine space.
+    emb: [N,D], labels: [N], margin in cosine distance space.
+    """
+    # L2-normalize for stable cosine geometry
+    emb = torch.nn.functional.normalize(emb, dim=1)
 
+    # cosine distance in [0,2]
+    D = 1.0 - emb @ emb.t()
+
+    N = labels.numel()
+    device = labels.device
     same = labels[:, None].eq(labels[None, :])
-    eye = torch.eye(len(labels), device=labels.device, dtype=torch.bool)
+    eye  = torch.eye(N, dtype=torch.bool, device=device)
 
     pos_mask = same & (~eye)
     neg_mask = ~same
 
-    # hardest positive and negative per anchor
-    pos = (D * pos_mask.float())
-    pos[pos_mask == 0] = -1.0
-    hardest_pos = pos.max(dim=1).values
+    # hardest positive
+    pos_d = D.clone()
+    pos_d[~pos_mask] = -1.0
+    hardest_pos = pos_d.max(dim=1).values  # [-1,2]
 
-    Dn = D.clone()
-    Dn[neg_mask == 0] = 1e9
-    hardest_neg = Dn.min(dim=1).values
+    # kth-nearest negative (avoid the single closest outlier)
+    neg_d = D.clone()
+    neg_d[~neg_mask] = float('inf')
+    n_negs = neg_mask.sum(1)
 
-    delta = hardest_pos - hardest_neg + margin
-    active = (delta > 0).float()
-
-    valid = (hardest_pos > -0.5) & (hardest_neg < 1e8)
-    if valid.any():
-        return active[valid].mean().item() * 100.0  # percentage
-    else:
+    valid = (hardest_pos > -0.5) & (n_negs >= kth)
+    if not valid.any():
         return float("nan")
+
+    # kth smallest negative distance per valid row
+    kth_vals = torch.topk(-neg_d[valid], kth, dim=1).values[:, -1].neg()
+
+    delta   = hardest_pos[valid] - kth_vals + margin
+    active  = (delta > 0).float()
+    return active.mean().item() * 100.0
+
+
+# @torch.no_grad()
+# def mining_stats(emb, labels, margin: float):
+#     """Compute % of anchors violating the margin (active triplets)."""
+#     D = 1.0 - emb @ emb.t()  # cosine distance in [0,2]
+
+#     same = labels[:, None].eq(labels[None, :])
+#     eye = torch.eye(len(labels), device=labels.device, dtype=torch.bool)
+
+#     pos_mask = same & (~eye)
+#     neg_mask = ~same
+
+#     # hardest positive and negative per anchor
+#     pos = (D * pos_mask.float())
+#     pos[pos_mask == 0] = -1.0
+#     hardest_pos = pos.max(dim=1).values
+
+#     Dn = D.clone()
+#     Dn[neg_mask == 0] = 1e9
+#     hardest_neg = Dn.min(dim=1).values
+
+#     delta = hardest_pos - hardest_neg + margin
+#     active = (delta > 0).float()
+
+#     valid = (hardest_pos > -0.5) & (hardest_neg < 1e8)
+#     if valid.any():
+#         return active[valid].mean().item() * 100.0  # percentage
+#     else:
+#         return float("nan")
 
 from torch.utils.data import Sampler
 
