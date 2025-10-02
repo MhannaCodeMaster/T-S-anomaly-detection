@@ -186,6 +186,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     
 def load_tl_training_datasets(cfg, paths):
     print("Loading triplet training datasets...")
+    BATCH_SIZE = cfg.batch_size
     SEED = 123
     VAL_PERC = 0.2
     
@@ -258,15 +259,14 @@ def load_tl_training_datasets(cfg, paths):
     
     train_dataset = torch.utils.data.ConcatDataset([train_ok_ds, train_notok_ds])
     val_dataset   = torch.utils.data.ConcatDataset([val_ok_ds, val_notok_ds])
-    len_ok = len(val_ok_ds)
-    len_ng = len(val_notok_ds)
-    val_sampler = StratifiedTwoClassBatchSampler(len_ok=len_ok, len_ng=len_ng, batch_size=cfg.batch_size, drop_last=False)   
-    BATCH_SIZE = cfg.batch_size
+    len_ok = len(train_ok_ds)
+    len_ng = len(train_notok_ds)
+    train_sampler = StratifiedTwoClassBatchSampler(len_ok=len_ok, len_ng=len_ng, batch_size=BATCH_SIZE, drop_last=True)   
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE,
-                              shuffle=True, drop_last=True, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_sampler=train_sampler,
+                            num_workers=4, pin_memory=True)
     print("Train dataset loaded")
-    val_loader = DataLoader(val_dataset, batch_sampler=val_sampler, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, drop_last=False, pin_memory=True)
     print("Validation dataset loaded")
     print("Triplet datasets loading completed.")
     return train_loader, val_loader
