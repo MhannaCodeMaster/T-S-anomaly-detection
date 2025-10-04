@@ -95,7 +95,6 @@ def get_mvtec_label(img_path: str) -> int:
     - returns 0 if parent folder is 'good'
     - returns 1 otherwise (any defect type)
     """
-    print(img_path)
     label = 0 if "good" in str(img_path).lower() else 1
     return label
 
@@ -232,7 +231,7 @@ def crop_images_iter(loss_map, loader_or_batch, mean, std, args, save_debug=True
         os.makedirs(os.path.join(run_dir, "crops"),  exist_ok=True)
         os.makedirs(os.path.join(run_dir, "images"), exist_ok=True)
 
-    print(f"Starting cropping images… [0/{total}]", end="\r")
+    # print(f"Starting cropping images… [0/{total}]", end="\r")
     idx_global = 0
 
     for paths, _ in iterable:                    # <<== (paths, images)
@@ -300,12 +299,12 @@ def crop_images_iter(loss_map, loader_or_batch, mean, std, args, save_debug=True
                 cv2.imwrite(os.path.join(run_dir, "images", f"{defect}_{stem}_boxes.png"),   boxes_vis)
 
             idx_global += 1
-            print(f"Cropping images… [{idx_global}/{total}]", end="\r")
+            # print(f"Cropping images… [{idx_global}/{total}]", end="\r")
 
             # yield per-image
             yield crops, boxes, p
 
-    print("\nCropping images completed.")
+    # print("\nCropping images completed.")
 
 def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
