@@ -34,7 +34,7 @@ def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
     #----- Required args -----#
     p.add_argument("--dataset", required=True, type=str, help="Path to the folder crops with ok/not ok dataset root directory")
-    p.add_argument("--mainfest_path", required=True, type=str, help="Path to the folder containing parents.csv")
+    p.add_argument("--manifest_path", required=True, type=str, help="Path to the folder containing parents.csv")
     p.add_argument("--model_path", required=True, type=str, help="Path to the trained triplet model")
     
     #----- Optional args -----#
