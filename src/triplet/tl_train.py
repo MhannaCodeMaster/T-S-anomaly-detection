@@ -79,7 +79,8 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             # Mining triplets from the batch for the triplet loss algo
             # we take one anchor, one positive, and one negative
             # a, p, n = mine_batch(z.detach(), y, MARGIN)
-            a, p, n = mine_triplets(z.detach(), y)
+            # a, p, n = mine_triplets(z.detach(), y)
+            a, p, n = mine_triplets_v1(z.detach(), y, margin=MARGIN)
             if len(a) == 0:
                 continue
             
@@ -102,7 +103,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         #---- Training Metrics ----#
         epoch_active_pct = 100.0 * train_active / train_active_total if train_active_total > 0 else 0.0
         avg_train_loss = total_train_loss / len(train_loader)
-        print(f"Training stats - Epoch {epoch} -  avg train loss: {avg_train_loss:.4f} - train_active={epoch_active_pct}")
+        print(f"Training stats - Epoch {epoch+1} -  avg train loss: {avg_train_loss:.4f} - train active={epoch_active_pct}")
         #---------------- TRAIN END ----------------# 
         
         #---------------- VAL START ----------------#
@@ -117,7 +118,8 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
                 z = model(x)
                 
                 # a, p, n = mine_batch(z.detach(), y, MARGIN)
-                a, p, n = mine_triplets(z.detach(), y)
+                # a, p, n = mine_triplets(z.detach(), y)
+                a, p, n = mine_triplets_v1(z.detach(), y, margin=MARGIN)
                 if len(a) == 0:
                     continue
                 
@@ -132,7 +134,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         #---- Val Metrics ----#
         epoch_active_pct = 100.0 * val_active / val_active_total if val_active_total > 0 else 0.0
         avg_val_loss = val_total_loss / len(val_loader)
-        print(f"Validation stats - Epoch {epoch} -  avg val loss: {avg_val_loss:.4f} - val active={epoch_active_pct}")
+        print(f"Validation stats - Epoch {epoch+1} -  avg val loss: {avg_val_loss:.4f} - val active={epoch_active_pct}")
         #---------------- VAL END ----------------#
 
         #----- best/early stop -----
@@ -206,6 +208,104 @@ def mine_triplets(z, y):
     return (torch.tensor(a_idx, dtype=torch.long, device=device),
             torch.tensor(p_idx, dtype=torch.long, device=device),
             torch.tensor(n_idx, dtype=torch.long, device=device))
+
+@torch.no_grad()
+def mine_triplets_v1(
+    z: torch.Tensor,
+    y: torch.Tensor,
+    mode: str = "semi-hard",
+    margin: float = 0.5,
+    parent_ids: list | None = None,
+):
+    """
+    Mine triplets (a, p, n) from a batch of embeddings.
+
+    Args:
+        z: [B, D] L2-normalized embeddings (unit norm -> cosine distance works).
+        y: [B] integer labels.
+        mode: "random" | "semi-hard" | "hard".
+              - random   : random positive, random negative from other classes
+              - semi-hard: hardest positive; negative with d_ap < d_an < d_ap+margin (fallback to hard-neg)
+              - hard     : hardest positive; hardest negative (closest negative)
+        margin: margin used for semi-hard selection.
+        parent_ids: optional list of len B; if provided, negatives sharing the
+                    same parent as the anchor are excluded (avoid false negatives).
+
+    Returns:
+        a, p, n: Long tensors of indices on the same device as y.
+    """
+    device = y.device
+    B = y.size(0)
+    # Cosine distance since z is unit-normalized: d = 1 - cos_sim in [0, 2]
+    D = 1.0 - z @ z.t()  # [B,B]
+
+    # Optional: map parent ids to ints for quick comparison on device
+    pid = None
+    if parent_ids is not None:
+        uniq = {p: i for i, p in enumerate(parent_ids)}
+        pid = torch.tensor([uniq[p] for p in parent_ids], device=device)
+
+    aL, pL, nL = [], [], []
+
+    for a in range(B):
+        same = (y == y[a]).clone()
+        diff = ~same
+        same[a] = False  # exclude the anchor itself as a positive
+
+        # Exclude negatives from same parent if requested
+        if pid is not None:
+            diff = diff & (pid != pid[a])
+
+        if not same.any() or not diff.any():
+            continue
+
+        # ---------- choose positive ----------
+        if mode == "random":
+            pos_idx = torch.where(same)[0]
+            p = pos_idx[torch.randint(len(pos_idx), (1,)).item()]
+            d_ap = D[a, p].item()
+        else:
+            # hardest positive (max distance among positives)
+            pos_dists = D[a][same]                           # [P]
+            p_rel = torch.argmax(pos_dists)                  # idx within mask
+            p = torch.arange(B, device=device)[same][p_rel]  # absolute index
+            d_ap = float(D[a, p])
+
+        # ---------- choose negative ----------
+        if mode == "random":
+            neg_idx = torch.where(diff)[0]
+            n = neg_idx[torch.randint(len(neg_idx), (1,)).item()]
+
+        elif mode == "hard":
+            # hardest negative = closest negative (min distance)
+            n_rel = torch.argmin(D[a][diff])
+            n = torch.arange(B, device=device)[diff][n_rel]
+
+        elif mode == "semi-hard":
+            # window: d_ap < d_an < d_ap + margin
+            window = (D[a] > d_ap) & (D[a] < d_ap + margin) & diff
+            if window.any():
+                # pick the closest in the window (hardest among semi-hard)
+                n_rel = torch.argmin(D[a][window])
+                n = torch.arange(B, device=device)[window][n_rel]
+            else:
+                # fallback to hardest negative
+                n_rel = torch.argmin(D[a][diff])
+                n = torch.arange(B, device=device)[diff][n_rel]
+        else:
+            raise ValueError(f"Unknown mining mode: {mode}")
+
+        aL.append(a); pL.append(int(p)); nL.append(int(n))
+
+    if not aL:
+        empty = torch.empty(0, dtype=torch.long, device=device)
+        return empty, empty, empty
+
+    return (
+        torch.tensor(aL, dtype=torch.long, device=device),
+        torch.tensor(pL, dtype=torch.long, device=device),
+        torch.tensor(nL, dtype=torch.long, device=device),
+    )
 
    
 def mining_active(z, y, margin):
