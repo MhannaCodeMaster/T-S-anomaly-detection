@@ -28,10 +28,19 @@ def main():
     teacher.cuda()
     student.cuda()
 
-    transform = transforms.Compose([
-        transforms.Resize([224, 224]),
+    # 1) Student (teacher–student) uses 256×256
+    st_transform = transforms.Compose([
+        transforms.Resize([256, 256]),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                            std =[0.229, 0.224, 0.225]),
+    ])
+
+    tl_transform = transforms.Compose([
+        transforms.Resize(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                            std =[0.229, 0.224, 0.225]),
     ])
 
     st_saved_dict = torch.load(args.st_path)
@@ -42,14 +51,14 @@ def main():
     triplet.load_state_dict(tl_saved_dict['state_dict'])
     triplet.cuda()
     
-    test_loader = load_test_datasets(transform, args)
+    test_loader = load_test_datasets(st_transform, args)
     mean, std = load_calibration_stats(args.calibration)
     test_err_map = get_error_map(teacher, student, test_loader)                
     crops, boxes, image_paths = crop_images(test_err_map, test_loader, mean, std, args)
     print('Image used:', image_paths)
-    res1 = triplet_classifer(triplet, transform, boxes, image_paths, crops, args)
-    res2 = triplet_classifier_knn( triplet, transform, boxes, image_paths, crops, args, k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
-    res_proto = triplet_classifier_proto(triplet, transform, boxes, image_paths, crops, args,beta=10.0, out_path="result_proto.png")
+    res1 = triplet_classifer(triplet, tl_transform, boxes, image_paths, crops, args)
+    res2 = triplet_classifier_knn( triplet, tl_transform, boxes, image_paths, crops, args, k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
+    res_proto = triplet_classifier_proto(triplet, tl_transform, boxes, image_paths, crops, args,beta=10.0, out_path="result_proto.png")
 
 def crop_images(loss_map, loader, mean, std, args):
     print("Starting cropping images...",end='\n')  
