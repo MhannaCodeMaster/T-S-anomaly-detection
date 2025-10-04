@@ -70,7 +70,7 @@ def main():
         # print('Image used:', image_paths)
         
         y_true, y_score, y_pred = [], [], []
-        for (crops, boxes, img_path) in crop_images_iter(test_err_map, test_loader, mean, std, args):
+        for (crops, boxes, img_path) in crop_images_iter(test_err_map, [(paths, x)], mean, std, args):
             res2 = triplet_classifier_knn(triplet, tl_transform, boxes, [img_path], crops, args,
                                         k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
             
