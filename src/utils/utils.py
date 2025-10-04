@@ -48,55 +48,57 @@ def get_error_map(teacher, student, loader):
     # Returns an (N, 64, 64) array of anomaly score maps, where N is the number of images (Higher = more anomalous).
     return loss_map
 
+@torch.no_grad()
 def get_error_map_v1(teacher, student, loader_or_batch):
-    """Compute anomaly score maps for a whole DataLoader or for a single batch."""
+    """
+    Compute anomaly score maps at 64x64 for either:
+      - a full DataLoader that yields (paths, images)
+      - a single batch (paths, images)
+
+    Returns: np.ndarray of shape [N, 64, 64]
+    """
     teacher.eval()
     student.eval()
 
-    # If it's a full DataLoader
+    # Figure out what we got (full loader or a single batch)
     if hasattr(loader_or_batch, "dataset"):
+        iterable = loader_or_batch
         N = len(loader_or_batch.dataset)
+    elif isinstance(loader_or_batch, (list, tuple)) and len(loader_or_batch) == 2:
+        paths, x = loader_or_batch
+        iterable = [loader_or_batch]
+        N = x.size(0)
+    elif isinstance(loader_or_batch, list) and loader_or_batch and len(loader_or_batch[0]) == 2:
         iterable = loader_or_batch
+        N = sum(batch[1].size(0) for batch in loader_or_batch)
     else:
-        # Single batch (list or tuple)
-        iterable = loader_or_batch
-        # estimate N from first element
-        if isinstance(loader_or_batch, list):
-            N = loader_or_batch[0][0].size(0) if torch.is_tensor(loader_or_batch[0][0]) else len(loader_or_batch)
-        else:
-            N = len(loader_or_batch)
+        raise ValueError("get_error_map expects a DataLoader or (paths, images) batch.")
 
-    # Pre-allocate
-    loss_map = np.zeros((N, 64, 64))
+    loss_map = np.zeros((N, 64, 64), dtype=np.float32)
     i = 0
-    
-    for batch in iterable:
-        # Unpack (x,y,_,paths) OR (path,img)
-        if isinstance(batch, (list, tuple)) and len(batch) >= 2 and torch.is_tensor(batch[1]):
-            batch_img = batch[1].cuda(non_blocking=True)
-        elif isinstance(batch, (list, tuple)) and torch.is_tensor(batch[0]):
-            batch_img = batch[0].cuda(non_blocking=True)
-        else:
-            raise ValueError("Unexpected batch format:", type(batch))
 
-        with torch.no_grad():
-            t_feat = teacher(batch_img)
-            s_feat = student(batch_img)
+    for paths, batch_img in iterable:      # <<== (paths, images)
+        batch_img = batch_img.cuda(non_blocking=True)
 
-        score_map = 1.
+        # forward
+        t_feat = teacher(batch_img)
+        s_feat = student(batch_img)
+
+        # aggregate per-level mismatch into a 64x64 map via product
+        score_map = 1.0
         for j in range(len(t_feat)):
-            t_feat[j] = F.normalize(t_feat[j], dim=1)
-            s_feat[j] = F.normalize(s_feat[j], dim=1)
-            sm = torch.sum((t_feat[j] - s_feat[j]) ** 2, 1, keepdim=True)
+            t = F.normalize(t_feat[j], dim=1)
+            s = F.normalize(s_feat[j], dim=1)
+            sm = torch.sum((t - s) ** 2, dim=1, keepdim=True)                   # [B,1,h,w]
             sm = F.interpolate(sm, size=(64, 64), mode='bilinear', align_corners=False)
-            score_map = score_map * sm
+            score_map = score_map * sm                                          # product aggregate
 
-        loss_map[i: i + batch_img.size(0)] = score_map.squeeze().cpu().numpy()
-        i += batch_img.size(0)
+        B = batch_img.size(0)
+        loss_map[i:i+B] = score_map.squeeze(1).detach().cpu().numpy()
+        i += B
 
     return loss_map
 
-  
 def normalize_01(x: np.ndarray):
     x = x.astype(np.float32)
     mn, mx = float(x.min()), float(x.max())
