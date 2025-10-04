@@ -24,14 +24,11 @@ def main():
     paths = get_paths(cfg.category, 'triplet')
     print("Training on category: ", cfg.category)
 
-    try:
-        triplet = TripletEmbedder(pretrained=True)
-        triplet.cuda()
-        train_loader, val_loader = load_tl_training_datasets(cfg, paths)
-        train_triplet(triplet, train_loader, val_loader, cfg, paths)
-    except Exception as e:
-        print("Error has occured: ", e)
-        print(e.stack())
+    triplet = TripletEmbedder(pretrained=True)
+    triplet.cuda()
+    train_loader, val_loader = load_tl_training_datasets(cfg, paths)
+    train_triplet(triplet, train_loader, val_loader, cfg, paths)
+   
    
 def train_triplet(model , train_loader, val_loader, cfg, paths):
     print("Starting triplet learning...")
@@ -70,7 +67,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     
     for epoch in range(TOTAL_EPOCHS):
         model.train()
-        total_train_loss, total_train_triplets = 0.0, 0, 0
+        total_train_loss, total_train_triplets = 0.0, 0
         train_active, train_active_total, train_batches = 0, 0, 0
 
         #---------------- TRAIN START ----------------# 
