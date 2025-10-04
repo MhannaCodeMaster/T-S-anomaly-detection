@@ -95,8 +95,8 @@ def get_mvtec_label(img_path: str) -> int:
     - returns 0 if parent folder is 'good'
     - returns 1 otherwise (any defect type)
     """
-    parent = Path(img_path).parent.name.lower()
-    return 0 if parent == "good" else 1
+    label = 0 if "good" in str(img_path).lower() else 1
+    return label
 
 def crop_images(loss_map, loader, mean, std, args):
     print("Starting cropping images...",end='\n')  
