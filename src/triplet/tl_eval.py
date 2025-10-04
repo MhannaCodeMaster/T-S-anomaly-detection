@@ -35,12 +35,12 @@ def load_args():
     #----- Required args -----#
     p.add_argument("--dataset", required=True, type=str, help="Path to the folder crops with ok/not ok dataset root directory")
     p.add_argument("--manifest_path", required=True, type=str, help="Path to the folder containing parents.csv")
+    p.add_argument("--manifest_file", required=True, type=str, help="Manifest file namt")
     p.add_argument("--model_path", required=True, type=str, help="Path to the trained triplet model")
-    
-    #----- Optional args -----#
-    p.add_argument("--category", required=False, type=str, help="Dataset category (e.g., cable, hazelnut)")
-    p.add_argument("--batch_size", type=int, required=False, help="Batch size for triplet training")
-    p.add_argument("--tsne_components", required=False, type=str, help="T-SNE components (2: 2D or 3: 3D) ")
+    p.add_argument("--category", required=True, type=str, help="Dataset category (e.g., cable, hazelnut)")
+    #----- optional -----#
+    p.add_argument("--batch_size", required=False, type=int, default=32, help="Batch size for triplet training")
+    p.add_argument("--tsne_components", required=False, default=2, type=str, help="T-SNE components (2: 2D or 3: 3D) ")
 
     args = p.parse_args()
     return args
@@ -58,7 +58,7 @@ def load_crops(args, img_size=224, num_workers=4, pin_memory=True):
     notok_df = pd.read_csv(os.path.join(crops_dir, "not_ok_manifest.csv"))
 
     # 2) Read validation parent IDs (saved during your split)
-    parents_path = os.path.join(args.mainfest_path, "train_parents.csv")
+    parents_path = os.path.join(args.manifest_path, args.manifest_file)
     parents = set(pd.read_csv(parents_path)["parent_id"])
 
     # 3) Filter to validation crops only
