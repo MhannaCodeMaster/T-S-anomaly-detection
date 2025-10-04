@@ -303,6 +303,7 @@ def mine_batch(emb, labels, margin):
 
     return a_idx, p_idx, n_idx
 
+
 def xywh_to_xyxy(box):
     x, y, w, h = box
     return (x, y, x + w, y + h)

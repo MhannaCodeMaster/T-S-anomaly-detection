@@ -8,8 +8,7 @@ import torchvision.transforms.functional as TF
 import random
 from sklearn.metrics import roc_auc_score, average_precision_score, f1_score
 
-
-from src.triplet.triplet import TripletEmbedder
+from src.triplet.triplet import *
 from src.data.data_utils import *
 from src.data.datasets import *
 
@@ -39,6 +38,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     #----------- CONFIG -----------#
     CATEGORY     = cfg.category
     TOTAL_EPOCHS = int(cfg.epochs)
+    BATCH_SIZE   = int(cfg.batch_size)
     MARGIN       = float(cfg.margin)
     LR           = float(cfg.lr)
     WGT_DECAY    = float(cfg.weight_decay)
@@ -59,135 +59,164 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     best_val_loss = float("inf")
     es_bad_epochs = 0
 
-    model.train()
     best_model = None
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WGT_DECAY)
-    sched     = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TOTAL_EPOCHS)
+    optimizer    = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WGT_DECAY)
+    sched        = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TOTAL_EPOCHS)
     triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
         distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
-        margin=MARGIN
-    )
+        margin=MARGIN)
     
     for epoch in range(TOTAL_EPOCHS):
         model.train()
-        total_loss, total_triplets, contrib_batches = 0.0, 0, 0
+        total_train_loss, total_train_triplets = 0.0, 0, 0
+        train_active, train_active_total, train_batches = 0, 0, 0
 
-        # --- reset per-epoch stats ---
-        train_active_sum, train_batches = 0.0, 0
-        val_active_sum,   val_batches   = 0.0, 0
-
-        # ---------- TRAIN ----------
+        #---------------- TRAIN START ----------------# 
         for x, y, _, _ in train_loader:
-            x = x.cuda(); y = y.cuda()
-            z = model(x)  # already normalized
-
-            act_pct = mining_stats(z.detach(), y, MARGIN)  # returns e.g. 33.4 (%)
-            train_active_sum += act_pct
-            train_batches += 1
-
-            a, p, n = mine_batch(z.detach(), y, MARGIN)
+            x = x.cuda() # tensor of shape [batch_size, channels, height, width]
+            y = y.cuda() # tensor of shape [batch_size]
+            z = model(x) # tensor of shape [batch_size, embed_dim]
+            
+            # Mining triplets from the batch for the triplet loss algo
+            # we take one anchor, one positive, and one negative
+            # a, p, n = mine_batch(z.detach(), y, MARGIN)
+            a, p, n = mine_triplets(z.detach(), y)
             if len(a) == 0: continue
-
+            
             loss = triplet_loss(z[a], z[p], z[n])
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
+            total_train_loss += loss.item()
 
-            total_loss += loss.item()
-            total_triplets += len(a)
-            contrib_batches += 1
+            # act_pct = mining_stats(z.detach(), y, MARGIN)
+            # train_active_sum += act_pct
+            # train_batches += 1
+            
+            total_train_triplets += len(a)
+            act_pct, total = mining_active(z.detach(), y, MARGIN)
+            train_active += act_pct
+            train_active_total += total
 
         sched.step()
-        avg_loss = total_loss / max(1, contrib_batches)
-
-        # ---------- VALID ----------
+        #---- Training Metrics ----#
+        epoch_active_pct = 100.0 * train_active / train_active_total if train_active_total > 0 else 0.0
+        avg_train_loss = total_train_loss / len(train_loader)
+        print(f"Training stats - Epoch {epoch} -  avg train loss: {avg_train_loss:.4f} - train_active={epoch_active_pct}")
+        #---------------- TRAIN END ----------------# 
+        
+        #---------------- VAL START ----------------#
+        val_total_loss, val_total_triplets, val_contrib_batches = 0.0, 0, 0
+        val_active, val_active_total = 0,0
+        avg_val_loss = 0.0
         model.eval()
         with torch.no_grad():
-            # (A) collect ALL val embeddings to stabilize stats
-            all_z, all_y = [], []
-            val_total_loss, val_total_triplets, val_contrib_batches = 0.0, 0, 0
-
             for x, y, _, _ in val_loader:
-                x = x.cuda(non_blocking=True)
-                y = y.cuda(non_blocking=True)
+                x = x.cuda()
+                y = y.cuda()
                 z = model(x)
-                all_z.append(z)
-                all_y.append(y)
-
-                a, p, n = mine_batch(z, y, MARGIN)
-                if len(a) == 0: continue
+                
+                # a, p, n = mine_batch(z.detach(), y, MARGIN)
+                a, p, n = mine_triplets(z.detach(), y)
+                if len(a) == 0:
+                    continue
+                
                 loss = triplet_loss(z[a], z[p], z[n])
                 
-                val_total_loss += loss.item()
                 val_total_triplets += len(a)
-                val_contrib_batches += 1
+                val_total_loss += loss.item()
+                act_pct, total = mining_active(z.detach(), y, MARGIN)
+                val_active += act_pct
+                val_active_total += total
+            
+        #---- Val Metrics ----#
+        epoch_active_pct = 100.0 * val_active / val_active_total if val_active_total > 0 else 0.0
+        avg_val_loss = val_total_loss / len(val_loader)
+        print(f"Validation stats - Epoch {epoch} -  avg val loss: {avg_val_loss:.4f} - val active={epoch_active_pct}")
+        #---------------- VAL END ----------------#
 
-            # (B) compute active% ONCE over the whole val set
-            if all_z:
-                Z = torch.cat(all_z, dim=0)
-                Y = torch.cat(all_y, dim=0)
-                val_act_pct = mining_stats(Z, Y, MARGIN)  # returns e.g. 33.4 (%)
-                val_active_sum += val_act_pct
-                val_batches += 1
-
-        val_avg_loss = val_total_loss / max(1, val_contrib_batches)
-
-        # ----- best/early stop -----
-        improved = (best_val_loss - val_avg_loss) > ES_MIN_DELTA
+        #----- best/early stop -----
+        improved = (best_val_loss - avg_val_loss) > ES_MIN_DELTA
         if improved:
-            best_val_loss = val_avg_loss
+            best_val_loss = avg_val_loss
             es_bad_epochs = 0
             torch.save({'category': CATEGORY, 'state_dict': model.state_dict()}, os.path.join(TRIPLETPATH))
         else:
             es_bad_epochs += 1
 
-        # epoch-level active% for logging (still percentages)
-        train_active = train_active_sum / max(1, train_batches)
-        val_active   = val_active_sum   / max(1, val_batches)
-        val_active_frac = val_active / 100.0
-
-        # ----- adaptive margin (convert to FRACTION here) -----
-        if ema_val_active is None:
-            ema_val_active = val_active_frac
-        else:
-            ema_val_active = EMA_BETA * ema_val_active + (1 - EMA_BETA) * val_active_frac
-
-        if cooldown == 0:
-            if ema_val_active < TARGET_LOW:
-                MARGIN = min(M_MAX, MARGIN + STEP)
-                cooldown = COOLDOWN_EPOCHS
-                triplet_loss.margin = MARGIN
-            elif ema_val_active > TARGET_HIGH:
-                MARGIN = max(M_MIN, MARGIN - STEP)
-                cooldown = COOLDOWN_EPOCHS
-                triplet_loss.margin = MARGIN
-        else:
-            cooldown -= 1
-
-        print(
-            f"Epoch[{epoch+1}/{TOTAL_EPOCHS}] "
-            f"- train_loss={avg_loss:.4f} - train_triplets={total_triplets} "
-            f"- train_active={train_active:.1f}% "
-            f"- val_loss={val_avg_loss:.4f} - val_triplets={val_total_triplets} "
-            f"- val_active={val_active:.1f}% "
-            f"- margin={MARGIN:.4f}"
-        )
-
         # ----- early stopping -----
         if es_bad_epochs >= ES_PATIENCE:
             print(f"Early stopping: no val_loss improvement > {ES_MIN_DELTA} for {ES_PATIENCE} epochs.")
             break
+        
+        # # ----- adaptive margin (convert to FRACTION here) -----
+        # if ema_val_active is None:
+        #     ema_val_active = val_active_frac
+        # else:
+        #     ema_val_active = EMA_BETA * ema_val_active + (1 - EMA_BETA) * val_active_frac
 
+        # if cooldown == 0:
+        #     if ema_val_active < TARGET_LOW:
+        #         MARGIN = min(M_MAX, MARGIN + STEP)
+        #         cooldown = COOLDOWN_EPOCHS
+        #         triplet_loss.margin = MARGIN
+        #     elif ema_val_active > TARGET_HIGH:
+        #         MARGIN = max(M_MIN, MARGIN - STEP)
+        #         cooldown = COOLDOWN_EPOCHS
+        #         triplet_loss.margin = MARGIN
+        # else:
+        #     cooldown -= 1
 
     print("Triplet learning completed.")
 
+def mine_triplets(z, y):
+    B = y.size(0)
+    a_idx, p_idx, n_idx = [],[],[]
     
+    for a in range(B):
+        pos_idx = (y == y[a]).nonezero(as_tuple=True)[0]
+        pos_idx = pos_idx[pos_idx != a]
+        if len(pos_idx) == 0:
+            continue
+        p = pos_idx[torch.randint(len(pos_idx), (1,)).items()]
+        
+        neg_idx = (y != y[a]).nonzero(as_tuple=True)[0]
+        n = neg_idx[torch.randint(len(neg_idx), (1,)).item()]
+        a_idx.append(a)
+        p_idx.append(p)
+        n_idx.append(n)
+        
+    return torch.tensor(a_idx), torch.tensor(p_idx), torch.tensor(n_idx)
+   
+def mining_active(z, y, margin):
+    B = y.size(0)
+    D = 1.0 - z @ z.t()
+    act_count, total = 0, 0
+    
+    for a in range(B):
+        same = (y == y[a])
+        diff = ~same
+        if not same.any() or not diff.any():
+            continue
+        
+        for p in torch.where(same)[0]:
+            d_ap = D[a, p].item()
+            for n in torch.where(diff)[0]:
+                d_an = D[a, n].item()
+                total += 1
+                if d_ap + margin > d_an:  # active
+                    act_count += 1
+                    
+    if total == 0:
+        return 0.0
+    return act_count, total
+ 
 def load_tl_training_datasets(cfg, paths):
     print("Loading triplet training datasets...")
     BATCH_SIZE = cfg.batch_size
     SEED = 123
-    VAL_PERC = 0.2
+    VAL_PERC = 0.3
     
     print("Reading manifests...")
     ok_df = pd.read_csv(os.path.join(cfg.dataset, 'crops', 'ok_manifest.csv'))
@@ -420,36 +449,6 @@ def mining_stats(emb, labels, margin: float, kth: int = 5):
 #         return active[valid].mean().item() * 100.0  # percentage
 #     else:
 #         return float("nan")
-
-from torch.utils.data import Sampler
-
-class StratifiedTwoClassBatchSampler(Sampler):
-    """Yields indices for batches containing half OK and half NOT_OK."""
-    def __init__(self, len_ok, len_ng, batch_size, drop_last=False):
-        assert batch_size % 2 == 0, "Use even batch_size"
-        self.len_ok, self.len_ng = len_ok, len_ng
-        self.bs = batch_size
-        self.drop_last = drop_last
-        self.ok_idx = list(range(0, len_ok))
-        self.ng_idx = list(range(len_ok, len_ok+len_ng))
-
-    def __iter__(self):
-        ok = self.ok_idx[:]
-        ng = self.ng_idx[:]
-        random.shuffle(ok); random.shuffle(ng)
-        i = j = 0
-        while i + self.bs//2 <= len(ok) and j + self.bs//2 <= len(ng):
-            batch = ok[i:i+self.bs//2] + ng[j:j+self.bs//2]
-            random.shuffle(batch)
-            yield batch
-            i += self.bs//2; j += self.bs//2
-        if not self.drop_last:
-            # handle remainders (optional: top-up with random)
-            pass
-
-    def __len__(self):
-        return min(self.len_ok, self.len_ng) * 2 // self.bs
-
     
 if __name__ == "__main__":
     main()
