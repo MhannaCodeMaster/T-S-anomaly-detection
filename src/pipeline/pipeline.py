@@ -7,6 +7,8 @@ from torchvision import transforms
 import numpy as np
 from PIL import Image
 
+from sklearn.metrics import f1_score, roc_auc_score
+
 
 from src.student_teacher.teacher import ResNet18_MS3
 from src.data.data_utils import *
@@ -53,12 +55,47 @@ def main():
     
     test_loader = load_test_datasets(st_transform, args)
     mean, std = load_calibration_stats(args.calibration)
-    test_err_map = get_error_map(teacher, student, test_loader)                
-    crops, boxes, image_paths = crop_images(test_err_map, test_loader, mean, std, args)
-    print('Image used:', image_paths)
-    res1 = triplet_classifer(triplet, tl_transform, boxes, image_paths, crops, args)
-    res2 = triplet_classifier_knn( triplet, tl_transform, boxes, image_paths, crops, args, k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
-    res_proto = triplet_classifier_proto(triplet, tl_transform, boxes, image_paths, crops, args,beta=10.0, out_path="result_proto.png")
+    
+    all_preds = []
+    all_scores = []
+    all_labels = []
+    for batch in test_loader:
+        x, y, _, paths = batch
+        x = x.cuda(non_blocking=True)
+        
+        test_err_map = get_error_map_v1(teacher, student, [(x,y,_,paths)])                
+        # crops, boxes, image_paths = crop_images(test_err_map, [(x,y,_,paths)], mean, std, args)
+        # print('Image used:', image_paths)
+        
+        y_true, y_score, y_pred = [], [], []
+        for (crops, boxes, img_path) in crop_images_iter(test_err_map, test_loader, mean, std, args):
+            res2 = triplet_classifier_knn(triplet, tl_transform, boxes, [img_path], crops, args,
+                                        k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
+            
+            label = get_mvtec_label(img_path) 
+            y_true.append(label)
+            y_score.append(res2["image_score"])
+            y_pred.append(res2["image_pred"])
+        
+        # res1 = triplet_classifer(triplet, tl_transform, boxes, image_paths, crops, args)
+        # res2 = triplet_classifier_knn( triplet, tl_transform, boxes, image_paths, crops, args, k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
+        # res_proto = triplet_classifier_proto(triplet, tl_transform, boxes, image_paths, crops, args,beta=10.0, out_path="result_proto.png")
+
+    # F1-score (thresholded)
+    f1 = f1_score(y_true, y_pred)
+    # AUROC (needs continuous scores)
+    auroc = roc_auc_score(y_true, y_score)
+
+    print(f"F1 = {f1:.4f}, AUROC = {auroc:.4f}")
+
+def get_mvtec_label(img_path: str) -> int:
+    """
+    For MVTec-AD test set:
+    - returns 0 if parent folder is 'good'
+    - returns 1 otherwise (any defect type)
+    """
+    parent = Path(img_path).parent.name.lower()
+    return 0 if parent == "good" else 1
 
 def crop_images(loss_map, loader, mean, std, args):
     print("Starting cropping images...",end='\n')  
@@ -155,6 +192,121 @@ def crop_images(loss_map, loader, mean, std, args):
     print("\nCropping images completed.",end="\n")
     return crops, boxes, orig_img_path
 
+def crop_images_iter(loss_map, loader_or_batch, mean, std, args):
+    """
+    Yields per-image: (crops:list[np.ndarray], boxes:list[xywh], image_path:str)
+    Compatible with either a real DataLoader or a single batch list.
+    """
+    print("Starting cropping images...", end="\n")
+
+    # detect iterable & total
+    if hasattr(loader_or_batch, "dataset"):
+        iterable = loader_or_batch
+        total = len(loader_or_batch.dataset)
+    else:
+        iterable = loader_or_batch
+        # best effort total from loss_map
+        total = int(loss_map.shape[0])
+
+    #--------- CONFIG -----------#
+    CATEGORY       = args.category
+    ENABLE_BOX_MERGE = args.merge_box
+    GAP_PX        = args.merge_gap
+    HM_THR        = args.h_th
+    BOX_MIN_AREA  = args.box_min_area
+    SCORE_THR     = args.conf_score
+    NMS_THR       = args.nms_thr
+    EXPAND_BOX    = args.expand_box
+    TOLERANCE     = args.tolerance
+    #----------------------------#
+
+    idx_global = 0
+    print(f"images processed: [0/{total}]", end="\r")
+
+    for batch in iterable:
+        # Support (paths, imgs) OR (imgs, labels, _, paths)
+        if isinstance(batch, (list, tuple)):
+            if len(batch) >= 2 and isinstance(batch[0], (list, tuple)):  # (paths, imgs) case from your code
+                img_paths, _imgs = batch
+            elif len(batch) >= 4 and isinstance(batch[-1], (list, tuple)):  # (x,y,_,paths)
+                img_paths = batch[-1]
+            else:
+                raise ValueError("Unexpected batch format in crop_images_iter.")
+        else:
+            raise ValueError("Batch must be a tuple/list.")
+
+        bs = len(img_paths)
+        hm_batch = loss_map[idx_global: idx_global + bs]
+
+        for k, p in enumerate(img_paths):
+            hm64 = hm_batch[k]
+            img = cv2.imread(p)
+            if img is None:
+                print(f"Warning: Unable to read image at {p}. Skipping.", end="\n")
+                idx_global += 1
+                continue
+
+            H, W = img.shape[:2]
+            hm_up = upscale_heatmap_to_image(hm64, (H, W))
+            hm_z  = zscore_calibrate(hm_up, mean, std)
+
+            hm_gray  = (hm_z * 255.0).astype(np.uint8)
+            hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
+            overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
+
+            mask, thr = threshold_heatmap(hm_z, method='percentile', percentile=HM_THR)
+
+            # --- clean mask ---
+            K_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            mask    = cv2.morphologyEx(mask, cv2.MORPH_OPEN, K_open)
+            K_dil   = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            mask    = cv2.dilate(mask, K_dil, iterations=1)
+            K_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            mask    = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, K_close)
+
+            # --- boxes ---
+            boxes   = components_to_bboxes(mask, min_area=BOX_MIN_AREA, ignore_border=True)
+            scores  = get_box_scores(boxes, hm_z, mode='mean')
+            indices = cv2.dnn.NMSBoxes(boxes, scores, SCORE_THR, NMS_THR)
+            if len(indices) > 0:
+                indices = indices.flatten()
+                boxes   = [boxes[i] for i in indices]
+
+            boxes = expand_boxes(boxes, H, W, expand_ratio=EXPAND_BOX)
+            boxes = remove_nested_boxes(boxes, tolerance=TOLERANCE)
+            if str(ENABLE_BOX_MERGE) == "1":
+                boxes = merge_touching_boxes_xywh(boxes, gap=GAP_PX, iou_thr=0.0, max_iters=5)
+
+            # crops & save visuals
+            stem   = Path(p).stem
+            defect = Path(p).parent.name
+            ts     = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            runtime = f"{ts}_{CATEGORY.lower()}"
+            base_eval = f"/kaggle/working/eval/{CATEGORY.lower()}/{runtime}"
+            os.makedirs(os.path.join(base_eval, "crops"),  exist_ok=True)
+            os.makedirs(os.path.join(base_eval, "images"), exist_ok=True)
+
+            crops = []
+            for bi, (x, y, w, h) in enumerate(boxes):
+                x0, y0, x1, y1 = pad_box(x, y, w, h, H, W, pad_ratio=0.05)
+                crop = img[y0:y1, x0:x1]
+                crops.append(crop)
+                cv2.imwrite(os.path.join(base_eval, "crops", f"{defect}_{stem}_box{bi}.png"), crop)
+
+            boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
+            cv2.imwrite(os.path.join(base_eval, "images", f"{defect}_{stem}_orig.png"),    img)
+            cv2.imwrite(os.path.join(base_eval, "images", f"{defect}_{stem}_overlay.png"), overlay)
+            cv2.imwrite(os.path.join(base_eval, "images", f"{defect}_{stem}_mask.png"),    mask)
+            cv2.imwrite(os.path.join(base_eval, "images", f"{defect}_{stem}_boxes.png"),   boxes_vis)
+
+            print(f"images processed: [{idx_global + 1}/{total}]", end="\r")
+            idx_global += 1
+
+            # ---- yield per-image result ----
+            yield crops, boxes, p
+
+    print("\nCropping images completed.", end="\n")
+
 def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
     #----- Required args -----#
@@ -181,8 +333,8 @@ def load_args():
 def load_test_datasets(transform, args):
     print("Loading Test dataset...")
     image_list = sorted(glob(os.path.join(args.dataset, args.category, 'test', '*', '*.png')))
-    test_image_list = [random.choice(image_list)]
-    test_dataset = MVTecDataset(test_image_list, transform=transform)
+    #test_image_list = [random.choice(image_list)]
+    test_dataset = MVTecDataset(image_list, transform=transform)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=False)
     print("Loading test dataset completed.")
     return test_loader
