@@ -65,7 +65,7 @@ def main():
         y = torch.tensor(y, device=x.device)
         x = x.cuda(non_blocking=True)
         
-        test_err_map = get_error_map_v1(teacher, student, [(x,paths)])                
+        test_err_map = get_error_map_v1(teacher, student, [(paths,x)])                
         # crops, boxes, image_paths = crop_images(test_err_map, [(x,y,_,paths)], mean, std, args)
         # print('Image used:', image_paths)
         
