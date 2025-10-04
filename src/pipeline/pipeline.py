@@ -95,6 +95,7 @@ def get_mvtec_label(img_path: str) -> int:
     - returns 0 if parent folder is 'good'
     - returns 1 otherwise (any defect type)
     """
+    print(img_path)
     label = 0 if "good" in str(img_path).lower() else 1
     return label
 
