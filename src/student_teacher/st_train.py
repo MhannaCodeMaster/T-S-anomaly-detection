@@ -32,6 +32,7 @@ def main():
         
         transform = transforms.Compose([
             transforms.Resize([256, 256]),
+            transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0.02),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])

@@ -47,7 +47,9 @@ def main():
     test_err_map = get_error_map(teacher, student, test_loader)                
     crops, boxes, image_paths = crop_images(test_err_map, test_loader, mean, std, args)
     print('Image used:', image_paths)
-    res = triplet_classifer(triplet, transform, boxes, image_paths, crops, args)
+    res1 = triplet_classifer(triplet, transform, boxes, image_paths, crops, args)
+    res2 = triplet_classifier_knn( triplet, transform, boxes, image_paths, crops, args, k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
+    res_proto = triplet_classifier_proto(triplet, transform, boxes, image_paths, crops, args,beta=10.0, out_path="result_proto.png")
 
 def crop_images(loss_map, loader, mean, std, args):
     print("Starting cropping images...",end='\n')  
@@ -266,7 +268,7 @@ def triplet_classifer(model, transform, boxes, image_paths, crops, args,
             cv2.rectangle(img, (x,y), (x+w_box,y+h_box), color, 2)
             cv2.putText(img, f"{score:.2f}", (x, max(0,y-5)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-        cv2.imwrite("result.png", img)
+        cv2.imwrite("result1.png", img)
 
     return {
         "crop_scores": crop_scores,
@@ -276,6 +278,154 @@ def triplet_classifer(model, transform, boxes, image_paths, crops, args,
         "idx_topk":    idx.detach().cpu().numpy(),
         "sim_topk":    sim_k.detach().cpu().numpy()
     }
+
+@torch.no_grad()
+def triplet_classifier_knn(
+    model, transform, boxes, image_paths, crops, args,
+    k=15, device="cuda", tau=0.25, prior_correction=True,
+    SIM_MIN=0.15,   # ignore neighbors with cosine below this
+):
+    PRED_THRESHOLD = float(args.pred_thr)
+    orig_image_path = image_paths[0]
+
+    gal_pkg = torch.load(args.emd_gal, map_location="cpu", weights_only=False)
+    Zg = torch.as_tensor(gal_pkg["embeddings"], dtype=torch.float32)   # [N,D]
+    yg = torch.as_tensor(gal_pkg["labels"], dtype=torch.long)          # [N] (0 OK, 1 DEF)
+    Zg = F.normalize(Zg, dim=1)
+
+    model.eval()
+    z, _ = embed_crops(model, crops, transform, device=device)  # z: [B,D]
+    z = F.normalize(z, dim=1)
+
+    Zg = Zg.to(device, non_blocking=True)
+    yg = yg.to(device, non_blocking=True)
+
+    # priors (optional)
+    if prior_correction:
+        n_ok  = max(1, int((yg == 0).sum().item()))
+        n_def = max(1, int((yg == 1).sum().item()))
+        w_ok, w_def = 1.0 / n_ok, 1.0 / n_def
+    else:
+        w_ok = w_def = 1.0
+
+    sim = z @ Zg.t()                                    # [B,N] cosine
+    kk  = min(int(k), Zg.size(0))
+    sim_k, idx = torch.topk(sim, k=kk, dim=1, largest=True, sorted=False)  # [B,kk]
+    y_k  = yg[idx]                                      # [B,kk]
+
+    # mask out weak neighbors (too dissimilar)
+    valid = (sim_k >= SIM_MIN).float()                  # [B,kk]
+    # softmax over only valid neighbors
+    logits = sim_k / max(1e-6, tau)
+    logits = logits - (1.0 - valid) * 1e9               # -inf for invalid
+    w = torch.softmax(logits, dim=1) * valid            # re-zero invalid
+    # renormalize
+    w = w / (w.sum(dim=1, keepdim=True) + 1e-8)
+
+    class_w = torch.where(y_k == 1,
+                          torch.tensor(w_def, device=w.device),
+                          torch.tensor(w_ok,  device=w.device))
+    w_adj = w * class_w
+    w_adj = w_adj / (w_adj.sum(dim=1, keepdim=True) + 1e-8)
+
+    # per-class masses
+    m_def = (w_adj * (y_k == 1).float()).sum(dim=1)     # [B]
+    m_ok  = (w_adj * (y_k == 0).float()).sum(dim=1)
+    # if nothing valid, masses become 0; we’ll detect that and fall back
+    total_mass = m_def + m_ok
+    defect_frac = torch.where(total_mass > 0, m_def / (total_mass + 1e-8), torch.zeros_like(m_def))
+
+    crop_scores = defect_frac.tolist()
+    crop_preds  = (defect_frac >= PRED_THRESHOLD).long().tolist()
+    image_score = float(defect_frac.max().item())
+    image_pred  = int(image_score >= PRED_THRESHOLD)
+
+    # visualize
+    img = cv2.imread(orig_image_path)
+    if img is not None:
+        for (x, y, w_box, h_box), pred, score in zip(boxes, crop_preds, crop_scores):
+            color = (0,0,255) if pred==1 else (0,255,0)
+            cv2.rectangle(img, (x,y), (x+w_box,y+h_box), color, 2)
+            cv2.putText(img, f"{score:.2f}", (x, max(0,y-5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        cv2.imwrite("result_knn.png", img)
+
+    return {
+        "crop_scores": crop_scores,
+        "crop_preds":  crop_preds,
+        "image_score": image_score,
+        "image_pred":  image_pred,
+        "idx_topk":    idx.detach().cpu().numpy(),
+        "sim_topk":    sim_k.detach().cpu().numpy(),
+        "valid_frac":  float((valid.sum().item()) / max(1, valid.numel()))
+    }
+
+@torch.no_grad()
+def build_prototypes(embeddings: torch.Tensor, labels: torch.Tensor):
+    # embeddings: [N,D] (already normalized), labels: [N]
+    proto_ok  = F.normalize(embeddings[labels==0].mean(dim=0, keepdim=True), dim=1)   # [1,D]
+    proto_def = F.normalize(embeddings[labels==1].mean(dim=0, keepdim=True), dim=1)   # [1,D]
+    return proto_ok, proto_def
+
+@torch.no_grad()
+def triplet_classifier_proto(model, transform, boxes, image_paths, crops, args,
+                                 device="cuda", beta=10.0, out_path="result_proto.png"):
+    """
+    Prototype (centroid) classifier in cosine space + draws boxes on the image.
+    - Builds two class prototypes (OK / DEFECT) from the gallery.
+    - Scores each crop by sigmoid(beta * (cos_def - cos_ok)).
+    - Saves an annotated image to out_path.
+    """
+    thr = float(args.pred_thr)
+    orig_image_path = image_paths[0]
+
+    # ---- Load gallery and build prototypes ----
+    gal_pkg = torch.load(args.emd_gal, map_location="cpu", weights_only=False)
+    Zg = torch.as_tensor(gal_pkg["embeddings"], dtype=torch.float32)   # [N,D]
+    yg = torch.as_tensor(gal_pkg["labels"], dtype=torch.long)          # [N]
+    Zg = F.normalize(Zg, dim=1)
+
+    proto_ok  = F.normalize(Zg[yg==0].mean(dim=0, keepdim=True), dim=1)   # [1,D]
+    proto_def = F.normalize(Zg[yg==1].mean(dim=0, keepdim=True), dim=1)   # [1,D]
+    proto_ok  = proto_ok.to(device)
+    proto_def = proto_def.to(device)
+
+    # ---- Embed crops ----
+    model.eval()
+    z, _ = embed_crops(model, crops, transform, device=device)  # [B,D]
+    z = F.normalize(z, dim=1)
+
+    # ---- Score ----
+    cos_ok  = (z @ proto_ok.t()).squeeze(1)         # [B]
+    cos_def = (z @ proto_def.t()).squeeze(1)
+    logits  = beta * (cos_def - cos_ok)
+    prob_def = torch.sigmoid(logits)                # [B] defect probability
+
+    crop_scores = prob_def.tolist()
+    crop_preds  = (prob_def >= thr).long().tolist()
+    image_score = float(prob_def.max().item())
+    image_pred  = int(image_score >= thr)
+
+    # ---- Visualization ----
+    img = cv2.imread(orig_image_path)
+    if img is not None:
+        for (x, y, w_box, h_box), pred, score in zip(boxes, crop_preds, crop_scores):
+            color = (0,0,255) if pred==1 else (0,255,0)
+            cv2.rectangle(img, (x,y), (x+w_box,y+h_box), color, 2)
+            cv2.putText(img, f"{score:.2f}", (x, max(0,y-5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        cv2.imwrite(out_path, img)
+
+    return {
+        "crop_scores": crop_scores,
+        "crop_preds":  crop_preds,
+        "image_score": image_score,
+        "image_pred":  image_pred,
+        "cos_ok":      cos_ok.detach().cpu().numpy(),
+        "cos_def":     cos_def.detach().cpu().numpy(),
+        "out_path":    out_path,
+    }
+
 
 if __name__ == '__main__':
     main()
