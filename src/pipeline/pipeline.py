@@ -56,9 +56,7 @@ def main():
     test_loader = load_test_datasets(st_transform, args)
     mean, std = load_calibration_stats(args.calibration)
     
-    all_preds = []
-    all_scores = []
-    all_labels = []
+    all_true, all_pred, all_score = [], [], []
     for batch in test_loader:
         paths, x = batch
         y = [0 if Path(p).parent.name == "good" else 1 for p in paths]  # labels
@@ -69,25 +67,27 @@ def main():
         # crops, boxes, image_paths = crop_images(test_err_map, [(x,y,_,paths)], mean, std, args)
         # print('Image used:', image_paths)
         
-        y_true, y_score, y_pred = [], [], []
         for (crops, boxes, img_path) in crop_images_iter(test_err_map, [(paths, x)], mean, std, args):
             res2 = triplet_classifier_knn(triplet, tl_transform, boxes, [img_path], crops, args,
                                         k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
             
-            label = get_mvtec_label(img_path) 
-            y_true.append(label)
-            y_score.append(res2["image_score"])
-            y_pred.append(res2["image_pred"])
+            label = get_mvtec_label(img_path)
+            all_true.append(label)
+            all_pred.append(res2["image_pred"])
+            all_score.append(res2["image_score"])
         
         # res1 = triplet_classifer(triplet, tl_transform, boxes, image_paths, crops, args)
         # res2 = triplet_classifier_knn( triplet, tl_transform, boxes, image_paths, crops, args, k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
         # res_proto = triplet_classifier_proto(triplet, tl_transform, boxes, image_paths, crops, args,beta=10.0, out_path="result_proto.png")
+    
+    f1 = f1_score(all_true, all_pred)
+    print(f"F1 = {f1:.4f}")
 
-    # F1-score (thresholded)
-    f1 = f1_score(y_true, y_pred)
-    # AUROC (needs continuous scores)
-    auroc = roc_auc_score(y_true, y_score)
-    print(f"F1 = {f1:.4f}, AUROC = {auroc:.4f}")
+    if len(set(all_true)) == 2:                 # both classes present
+        auroc = roc_auc_score(all_true, all_score)
+        print(f"AUROC = {auroc:.4f}")
+    else:
+        print("AUROC skipped: only one class present in y_true.")
 
 def get_mvtec_label(img_path: str) -> int:
     """
