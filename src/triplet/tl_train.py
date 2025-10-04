@@ -31,6 +31,7 @@ def main():
         train_triplet(triplet, train_loader, val_loader, cfg, paths)
     except Exception as e:
         print("Error has occured: ", e)
+        print(e.stack())
    
 def train_triplet(model , train_loader, val_loader, cfg, paths):
     print("Starting triplet learning...")
@@ -82,7 +83,8 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             # we take one anchor, one positive, and one negative
             # a, p, n = mine_batch(z.detach(), y, MARGIN)
             a, p, n = mine_triplets(z.detach(), y)
-            if len(a) == 0: continue
+            if len(a) == 0:
+                continue
             
             loss = triplet_loss(z[a], z[p], z[n])
             optimizer.zero_grad(set_to_none=True)
@@ -170,24 +172,44 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
 
     print("Triplet learning completed.")
 
+@torch.no_grad()
 def mine_triplets(z, y):
+    """
+    Random mining inside the batch.
+    Inputs:
+      z: [B, D]
+      y: [B]
+    Returns:
+      a, p, n : Long tensors of indices on y.device
+    """
     B = y.size(0)
-    a_idx, p_idx, n_idx = [],[],[]
-    
+    device = y.device
+    a_idx, p_idx, n_idx = [], [], []
+
     for a in range(B):
-        pos_idx = (y == y[a]).nonezero(as_tuple=True)[0]
-        pos_idx = pos_idx[pos_idx != a]
-        if len(pos_idx) == 0:
+        same = (y == y[a])
+        diff = ~same
+        same[a] = False  # don't pick the anchor as positive
+
+        if not same.any() or not diff.any():
             continue
-        p = pos_idx[torch.randint(len(pos_idx), (1,)).items()]
-        
-        neg_idx = (y != y[a]).nonzero(as_tuple=True)[0]
+
+        pos_idx = torch.where(same)[0]
+        p = pos_idx[torch.randint(len(pos_idx), (1,)).item()]
+
+        neg_idx = torch.where(diff)[0]
         n = neg_idx[torch.randint(len(neg_idx), (1,)).item()]
-        a_idx.append(a)
-        p_idx.append(p)
-        n_idx.append(n)
-        
-    return torch.tensor(a_idx), torch.tensor(p_idx), torch.tensor(n_idx)
+
+        a_idx.append(a); p_idx.append(int(p)); n_idx.append(int(n))
+
+    if len(a_idx) == 0:
+        return (torch.empty(0, dtype=torch.long, device=device),
+                torch.empty(0, dtype=torch.long, device=device),
+                torch.empty(0, dtype=torch.long, device=device))
+    return (torch.tensor(a_idx, dtype=torch.long, device=device),
+            torch.tensor(p_idx, dtype=torch.long, device=device),
+            torch.tensor(n_idx, dtype=torch.long, device=device))
+
    
 def mining_active(z, y, margin):
     B = y.size(0)
