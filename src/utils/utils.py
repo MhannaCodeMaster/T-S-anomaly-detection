@@ -425,3 +425,119 @@ def merge_touching_boxes_xywh(boxes, gap=0, iou_thr=0.0, max_iters=5):
 
     # back to xywh
     return [xyxy_to_xywh(b) for b in cur]
+
+import numpy as np
+
+def _xywh_to_xyxy(boxes):
+    """
+    boxes: (N,4) [x,y,w,h]  -> (N,4) [x1,y1,x2,y2]
+    """
+    boxes = np.asarray(boxes, dtype=np.float32)
+    if boxes.size == 0:
+        return boxes.reshape(0,4)
+    x1 = boxes[:,0]
+    y1 = boxes[:,1]
+    x2 = boxes[:,0] + boxes[:,2] - 1.0
+    y2 = boxes[:,1] + boxes[:,3] - 1.0
+    return np.stack([x1,y1,x2,y2], axis=1)
+
+def _iou_matrix(boxes_a, boxes_b):
+    """
+    boxes_a: (Na,4) xyxy, boxes_b: (Nb,4) xyxy
+    returns IoU matrix (Na, Nb)
+    """
+    if boxes_a.size == 0 or boxes_b.size == 0:
+        return np.zeros((boxes_a.shape[0], boxes_b.shape[0]), dtype=np.float32)
+
+    A = boxes_a.astype(np.float32)
+    B = boxes_b.astype(np.float32)
+
+    area_a = (np.clip(A[:,2] - A[:,0] + 1, 0, None) *
+              np.clip(A[:,3] - A[:,1] + 1, 0, None))  # (Na,)
+    area_b = (np.clip(B[:,2] - B[:,0] + 1, 0, None) *
+              np.clip(B[:,3] - B[:,1] + 1, 0, None))  # (Nb,)
+
+    x1 = np.maximum(A[:, None, 0], B[None, :, 0])
+    y1 = np.maximum(A[:, None, 1], B[None, :, 1])
+    x2 = np.minimum(A[:, None, 2], B[None, :, 2])
+    y2 = np.minimum(A[:, None, 3], B[None, :, 3])
+
+    inter_w = np.clip(x2 - x1 + 1, 0, None)
+    inter_h = np.clip(y2 - y1 + 1, 0, None)
+    inter = inter_w * inter_h  # (Na,Nb)
+
+    union = area_a[:, None] + area_b[None, :] - inter
+    iou = np.where(union > 0, inter / union, 0.0).astype(np.float32)
+    return iou
+
+def _greedy_match(iou_mat, thr=0.5):
+    """
+    Greedy one-to-one matching by IoU.
+    Returns:
+      matches: list of (pred_idx, gt_idx, iou)
+      unmatched_pred: list of pred indices
+      unmatched_gt:   list of gt  indices
+    """
+    Na, Nb = iou_mat.shape
+    used_pred = np.zeros(Na, dtype=bool)
+    used_gt   = np.zeros(Nb, dtype=bool)
+
+    # process pairs in descending IoU
+    flat = iou_mat.reshape(-1)
+    order = np.argsort(-flat)  # descending
+    matches = []
+    for f in order:
+        pi = f // Nb
+        gi = f %  Nb
+        if used_pred[pi] or used_gt[gi]:
+            continue
+        iou = iou_mat[pi, gi]
+        if iou < thr:
+            break
+        used_pred[pi] = True
+        used_gt[gi]   = True
+        matches.append((pi, gi, float(iou)))
+
+    unmatched_pred = np.where(~used_pred)[0].tolist()
+    unmatched_gt   = np.where(~used_gt)[0].tolist()
+    return matches, unmatched_pred, unmatched_gt
+
+def compute_iou_localization(pred_by_img, gt_by_img, iou_thr=0.5):
+    """
+    Computes localization stats at IoU threshold (e.g., 0.5):
+      - mean IoU over matched TPs
+      - TP / FP / FN counts
+      - also returns list of IoUs for all TPs
+    """
+    iou_tps = []
+    TP = FP = FN = 0
+
+    for img_path, pred in pred_by_img.items():
+        p_boxes = pred.get("boxes", [])
+        # sort by score (high→low) so matching behavior is deterministic
+        p_scores = pred.get("scores", [])
+        if len(p_boxes) != len(p_scores):
+            # fallback: no scores provided
+            order = np.arange(len(p_boxes))
+        else:
+            order = np.argsort(-np.asarray(p_scores, dtype=np.float32))
+        p_boxes = [p_boxes[i] for i in order]
+
+        g = gt_by_img.get(img_path, {"boxes": []})
+        g_boxes = g.get("boxes", [])
+
+        P = _xywh_to_xyxy(np.asarray(p_boxes, dtype=np.float32))
+        G = _xywh_to_xyxy(np.asarray(g_boxes, dtype=np.float32))
+
+        iou_mat = _iou_matrix(P, G)
+        matches, un_p, un_g = _greedy_match(iou_mat, thr=iou_thr)
+
+        TP += len(matches)
+        FP += len(un_p)
+        FN += len(un_g)
+
+        for _, _, iou in matches:
+            iou_tps.append(iou)
+
+    mean_iou_tp = float(np.mean(iou_tps)) if iou_tps else 0.0
+    return mean_iou_tp, iou_tps, TP, FP, FN

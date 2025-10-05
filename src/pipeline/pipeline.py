@@ -75,6 +75,9 @@ def main():
     mean, std = load_calibration_stats(args.calibration)
     
     all_true, all_pred, all_score = [], [], []
+    pred_by_img = {}   # {img_path: {"boxes": [[x,y,w,h],...], "scores": [..], "H":int, "W":int}}
+    gt_by_img   = {}   # {img_path: {"masks": [H×W bool arrays], "boxes": [[x,y,w,h],...]}}
+
     for batch in test_loader:
         paths, x = batch
         y = [0 if Path(p).parent.name == "good" else 1 for p in paths]  # labels
@@ -85,7 +88,7 @@ def main():
         # crops, boxes, image_paths = crop_images(test_err_map, [(x,y,_,paths)], mean, std, args)
         # print('Image used:', image_paths)
         
-        for (crops, boxes, img_path) in crop_images_iter(test_err_map, [(paths, x)], mean, std, args, run_dir):
+        for (crops, boxes, scores, img_path, H, W) in crop_images_iter(test_err_map, [(paths, x)], mean, std, args, run_dir):
             res2 = triplet_classifier_knn_okonly(triplet, tl_transform, boxes, [img_path], crops, best_thr, tl_gallery,
                                         k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
             
@@ -93,6 +96,15 @@ def main():
             all_true.append(label)
             all_pred.append(res2["image_pred"])
             all_score.append(res2["image_score"])
+            pred_by_img[img_path] = {
+                "boxes": boxes,
+                "scores": scores,
+                "H": H,
+                "W": W,
+            }
+            
+            gt = load_mvtec_gt(img_path)
+            gt_by_img[img_path] = gt
         
         # res1 = triplet_classifer(triplet, tl_transform, boxes, image_paths, crops, args)
         # res2 = triplet_classifier_knn( triplet, tl_transform, boxes, image_paths, crops, args, k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
@@ -101,11 +113,17 @@ def main():
     f1 = f1_score(all_true, all_pred)
     print(f"F1 = {f1:.4f}")
 
-    if len(set(all_true)) == 2:                 # both classes present
+    if len(set(all_true)) == 2:  # making sure both classes present
         auroc = roc_auc_score(all_true, all_score)
         print(f"AUROC = {auroc:.4f}")
     else:
         print("AUROC skipped: only one class present in y_true.")
+        
+    mean_iou_tp, iou_list, tp, fp, fn = compute_iou_localization(pred_by_img, gt_by_img, iou_thr=0.5)
+
+    print(f"Localization IoU@0.5:")
+    print(f"  Mean IoU over TPs: {mean_iou_tp:.4f} (N_TP={tp})")
+    print(f"  TP={tp}, FP={fp}, FN={fn}")
 
 def get_mvtec_label(img_path: str) -> int:
     """
@@ -310,7 +328,7 @@ def crop_images_iter(loss_map, loader_or_batch, mean, std, args, root):
             idx_global += 1
 
             # yield per-image
-            yield crops, boxes, p
+            yield crops, boxes, scores, p, H, W
 
 def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
@@ -654,6 +672,60 @@ def triplet_classifier_proto(model, transform, boxes, image_paths, crops, args,
         "out_path":    out_path,
     }
 
+def load_mvtec_gt(img_path: str | Path) -> dict:
+    """
+    Given a test image path like:
+      /kaggle/input/mvtec-ad/cable/test/bent_wire/000.png
+    return:
+      {
+        "masks": [H×W bool ndarray, ...],   # empty for 'good'
+        "boxes": [[x,y,w,h], ...],
+        "defect": "<defect_name>",          # e.g., "bent_wire" or "good"
+    }
+    """
+    img_path = Path(img_path)
+    defect = img_path.parent.name.lower()     # e.g., "bent_wire" or "good"
+
+    # 'good' images have no ground-truth masks
+    if defect == "good":
+        return {"masks": [], "boxes": [], "defect": defect}
+
+    # Build ground-truth directory & mask pattern
+    # Replace ".../test/<defect>/" with ".../ground_truth/<defect>/"
+    gt_dir = img_path.parents[1] / "ground_truth" / defect
+    # Mask files follow "<stem>_mask.png"
+    stem = img_path.stem                                # e.g., "000"
+    pattern = str(gt_dir / f"{stem}_mask.*")            # support .png/.bmp etc.
+
+    mask_paths = sorted(glob.glob(pattern))
+    masks = []
+    boxes = []
+
+    for mp in mask_paths:
+        m = cv2.imread(mp, cv2.IMREAD_GRAYSCALE)
+        if m is None:
+            continue
+        # binarize (MVTEC masks are already binary, but be safe)
+        m = (m > 0).astype(np.uint8)
+
+        # tight bbox per connected component (some masks may have multiple blobs)
+        num, lab = cv2.connectedComponents(m)
+        for c in range(1, num):
+            comp = (lab == c).astype(np.uint8)
+            ys, xs = np.where(comp)
+            if xs.size == 0:
+                continue
+            x0, x1 = int(xs.min()), int(xs.max())
+            y0, y1 = int(ys.min()), int(ys.max())
+            w = x1 - x0 + 1
+            h = y1 - y0 + 1
+            if w <= 0 or h <= 0:
+                continue
+
+            masks.append(comp.astype(bool))
+            boxes.append([x0, y0, w, h])
+
+    return {"masks": masks, "boxes": boxes, "defect": defect}
 
 if __name__ == '__main__':
     main()
