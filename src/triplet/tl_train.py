@@ -42,11 +42,13 @@ def main():
              best_thr=best_thr, best_f1=best_f1, auroc=auroc)
     
     # Building gallery of embeddings
-    print ("Buidling embeddings gallery using train dataset...")
+    print ("Buidling embeddings gallery using train ok dataset...")
     emd, labels = extract_embeddings(triplet, train_loader, device="cuda")
+    ok = [labels == 0]
+    gallery = emd[ok]
     torch.save({
-        "embeddings": emd,    # float32, [N, D]
-        "labels": labels       # long, [N]
+        "embeddings": gallery,    # float32, [N, D]
+        "labels": ok       # long, [N]
     }, paths.gallery)
     print ("Embedding gallery saved")
     #---- Using T-SNE for visualizing how the validation dataset are clustered in a 2D or 3D space
@@ -89,7 +91,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         margin=MARGIN)
     
     for epoch in range(TOTAL_EPOCHS):
-        print(f"Epoch [{epoch+1}/{TOTAL_EPOCHS}]\n")
+        print(f"Epoch [{epoch+1}/{TOTAL_EPOCHS}]")
         print("Training triplet...", end='\r')
         model.train()
         total_train_loss, total_train_triplets = 0.0, 0

@@ -86,7 +86,7 @@ def main():
         # print('Image used:', image_paths)
         
         for (crops, boxes, img_path) in crop_images_iter(test_err_map, [(paths, x)], mean, std, args, run_dir):
-            res2 = triplet_classifier_knn(triplet, tl_transform, boxes, [img_path], crops, best_thr, tl_gallery,
+            res2 = triplet_classifier_knn_okonly(triplet, tl_transform, boxes, [img_path], crops, best_thr, tl_gallery,
                                         k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
             
             label = get_mvtec_label(img_path)
@@ -442,6 +442,70 @@ def triplet_classifer(model, transform, boxes, image_paths, crops, args,
         "idx_topk":    idx.detach().cpu().numpy(),
         "sim_topk":    sim_k.detach().cpu().numpy()
     }
+
+@torch.no_grad()
+def triplet_classifier_knn_okonly(
+    model, transform, boxes, image_paths, crops, pred_thr, emd_gal,
+    k=15, device="cuda", tau=0.25, SIM_MIN=0.15
+):
+    PRED_THRESHOLD = float(pred_thr)
+    if crops is None or len(crops) == 0:
+        return {"crop_scores": [], "crop_preds": [], "image_score": 0.0, "image_pred": 0,
+                "idx_topk": None, "sim_topk": None}
+
+    # ---- load OK-only gallery ----
+    gal_pkg = torch.load(emd_gal, map_location="cpu", weights_only=False)
+    Zg = torch.as_tensor(gal_pkg["embeddings"], dtype=torch.float32)   # [N,D]
+    Zg = F.normalize(Zg, dim=1)
+    # (optional safety)
+    if "labels" in gal_pkg:
+        ygal = torch.as_tensor(gal_pkg["labels"])
+        assert (ygal == 0).all(), "Gallery must be OK-only!"
+
+    # ---- embed crops ----
+    model.eval()
+    z, _ = embed_crops(model, crops, transform, device=device)  # [B,D]
+    if z is None or z.numel() == 0:
+        return {"crop_scores": [], "crop_preds": [], "image_score": 0.0, "image_pred": 0,
+                "idx_topk": None, "sim_topk": None}
+    z = F.normalize(z, dim=1)
+
+    Zg = Zg.to(device, non_blocking=True)
+    sim = z @ Zg.t()                                    # [B,N] cosine sims to OK gallery
+    kk  = min(int(k), Zg.size(0))
+    sim_k, idx = torch.topk(sim, k=kk, dim=1, largest=True, sorted=False)  # [B,kk]
+
+    # ---- ignore very dissimilar neighbors ----
+    valid = (sim_k >= SIM_MIN).float()                  # [B,kk]
+    logits = sim_k / max(1e-6, tau)
+    logits = logits - (1.0 - valid) * 1e9              # -inf for invalid
+    w = torch.softmax(logits, dim=1) * valid
+    w = w / (w.sum(dim=1, keepdim=True) + 1e-8)
+
+    # ---- OK similarity and anomaly score ----
+    ok_sim = (w * sim_k).sum(dim=1)                    # weighted OK similarity in [-1,1]
+    # clamp to [0,1] for safety, then convert to anomaly (higher = more anomalous)
+    ok_sim = ok_sim.clamp(0.0, 1.0)
+    anomaly = 1.0 - ok_sim                              # [B] ∈ [0,1]
+
+    # fallback: if no valid neighbors for a crop, mark as highly anomalous
+    no_valid = (valid.sum(dim=1) == 0)
+    anomaly = torch.where(no_valid, torch.ones_like(anomaly), anomaly)
+
+    crop_scores = anomaly.tolist()
+    crop_preds  = (anomaly >= PRED_THRESHOLD).long().tolist()
+    image_score = float(anomaly.max().item())
+    image_pred  = int(image_score >= PRED_THRESHOLD)
+
+    return {
+        "crop_scores": crop_scores,
+        "crop_preds":  crop_preds,
+        "image_score": image_score,
+        "image_pred":  image_pred,
+        "idx_topk":    idx.detach().cpu().numpy(),
+        "sim_topk":    sim_k.detach().cpu().numpy(),
+    }
+
 
 @torch.no_grad()
 def triplet_classifier_knn(
