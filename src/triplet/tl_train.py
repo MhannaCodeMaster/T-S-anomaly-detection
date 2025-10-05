@@ -45,7 +45,7 @@ def main():
     # Building gallery of embeddings
     print ("Buidling embeddings gallery using train ok dataset...")
     emd, labels = extract_embeddings(triplet, train_loader, device="cuda")
-    ok = [labels == 0]
+    ok = (labels == 0)
     gallery = emd[ok]
     torch.save({
         "embeddings": gallery,    # float32, [N, D]
