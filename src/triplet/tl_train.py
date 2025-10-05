@@ -1,6 +1,7 @@
 import os
 from types import SimpleNamespace
 from dataclasses import dataclass
+import copy
 
 import torch
 from torchvision import transforms
@@ -32,19 +33,13 @@ def main():
     triplet = TripletEmbedder(pretrained=True)
     triplet.cuda()
     train_loader, val_loader = load_tl_training_datasets(cfg, paths)
-    train_triplet(triplet, train_loader, val_loader, cfg, paths)
+    best_model = train_triplet(triplet, train_loader, val_loader, cfg, paths)
     
-    # ---- Post-training evaluation ----
-    print("Calculating best F1 scord and AUROC to get the best threshold for classification...")
-    best_thr, best_f1, auroc = evaluate_triplet_on_val(triplet, val_loader, device="cuda")
-    print(f"\nBest threshold = {best_thr:.4f}, F1 = {best_f1:.4f}, AUROC = {auroc:.4f}")
-    print("Calculation completed")
-    np.savez(paths.metrics,
-             best_thr=best_thr, best_f1=best_f1, auroc=auroc)
+    #---- Post-training ----
     
-    # Building gallery of embeddings
+    #---- Build ok gallery of embeddings
     print ("Buidling embeddings gallery using train ok dataset...")
-    emd, labels = extract_embeddings(triplet, train_loader, device="cuda")
+    emd, labels = extract_embeddings(best_model, train_loader, device="cuda")
     ok = (labels == 0)
     gallery = emd[ok]
     torch.save({
@@ -52,8 +47,17 @@ def main():
         "labels": ok       # long, [N]
     }, paths.gallery)
     print ("Embedding gallery saved")
+    
+    #---- Fetching best threshold for classification
+    print("Calculating best F1 scord and AUROC to get the best threshold for classification...")
+    best_thr, best_f1, auroc = evaluate_triplet_on_val(best_model, val_loader, gallery, device="cuda")
+    print(f"\nBest threshold = {best_thr:.4f}, F1 = {best_f1:.4f}, AUROC = {auroc:.4f}")
+    print("Calculation completed")
+    np.savez(paths.metrics,
+             best_thr=best_thr, best_f1=best_f1, auroc=auroc)
+    
     #---- Using T-SNE for visualizing how the validation dataset are clustered in a 2D or 3D space
-    plot_tsne(emd, labels, args)
+    plot_tsne(emd, labels, paths)
     print(f"Training artifacts are saved under: {paths.root}")
     
     
@@ -174,6 +178,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         )
         if new_margin != triplet_loss.margin:
             triplet_loss.margin = float(new_margin)
+            MARGIN = float(new_margin)
             print(f"[Margin] {why}; margin -> {triplet_loss.margin:.3f}")
                 
         #----- best/early stop -----
@@ -181,6 +186,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         if improved:
             best_val_loss = avg_val_loss
             es_bad_epochs = 0
+            best_model = copy.deepcopy(model)
             torch.save({'category': CATEGORY, 'state_dict': model.state_dict()}, os.path.join(TRIPLETPATH))
         else:
             es_bad_epochs += 1
@@ -189,26 +195,9 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         if es_bad_epochs >= ES_PATIENCE:
             print(f"Early stopping: no val_loss improvement > {ES_MIN_DELTA} for {ES_PATIENCE} epochs.")
             break
-        
-        # # ----- adaptive margin (convert to FRACTION here) -----
-        # if ema_val_active is None:
-        #     ema_val_active = val_active_frac
-        # else:
-        #     ema_val_active = EMA_BETA * ema_val_active + (1 - EMA_BETA) * val_active_frac
-
-        # if cooldown == 0:
-        #     if ema_val_active < TARGET_LOW:
-        #         MARGIN = min(M_MAX, MARGIN + STEP)
-        #         cooldown = COOLDOWN_EPOCHS
-        #         triplet_loss.margin = MARGIN
-        #     elif ema_val_active > TARGET_HIGH:
-        #         MARGIN = max(M_MIN, MARGIN - STEP)
-        #         cooldown = COOLDOWN_EPOCHS
-        #         triplet_loss.margin = MARGIN
-        # else:
-        #     cooldown -= 1
 
     print("Triplet learning completed.")
+    return best_model
 
 @torch.no_grad()
 def mine_triplets(z, y):
@@ -581,42 +570,54 @@ def extract_embeddings(model, loader, device="cuda"):
     return embs, labels
 
 @torch.no_grad()
-def evaluate_triplet_on_val(triplet, val_loader, device="cuda"):
-    print("\n🔍 Evaluating Triplet model on validation set...")
+def evaluate_triplet_on_val(triplet, val_loader, gallery_ok, device="cuda",
+                            k=5, metric="cosine", pct_low=1, pct_high=99):
+    """
+    gallery_ok: np.ndarray [Ng, D] (OK-only, from TRAIN)
+    Returns: best_thr, best_f1, auroc, and (low, high) used for score scaling
+    """
+    triplet.eval()
 
-    emd, label = extract_embeddings(triplet, val_loader, device=device)
-    print(f"Extracted {len(label)} embeddings from val set")
+    # --- 1) Extract VAL embeddings + labels (OK=0, DEF=1) ---
+    embs, labels = [], []
+    for x, y, *_ in val_loader:
+        x = x.to(device, non_blocking=True)
+        z = triplet(x)
+        embs.append(z.cpu())
+        labels.append(y.cpu())
+    E = torch.cat(embs).numpy()                      # [N, D]
+    y_true = torch.cat(labels).numpy().astype(int)   # [N]
 
-    ok_mask = (label == 0)
-    knn = NearestNeighbors(n_neighbors=5, metric='cosine')
-    knn.fit(emd[ok_mask])
-    dist, _ = knn.kneighbors(emd)
-    anomaly_score = dist.mean(axis=1)  # higher = more defective
+    # --- 2) kNN distance to OK-only gallery (TRAIN) ---
+    Zg = F.normalize(torch.as_tensor(gallery_ok), dim=1).cpu().numpy()
+    knn = NearestNeighbors(n_neighbors=k, metric=metric).fit(Zg)
+    dist, _ = knn.kneighbors(E)                      # [N, k]
+    raw_score = dist.mean(axis=1)                    # higher = more anomalous
 
-    y_true = label
-    y_score = anomaly_score
+    # --- 3) Robust 0–1 scaling for interpretability ---
+    ok_scores = raw_score[y_true == 0]
+    lo = np.percentile(ok_scores, pct_low) if ok_scores.size else raw_score.min()
+    hi = np.percentile(raw_score, pct_high)
+    y_score = np.clip((raw_score - lo) / (hi - lo + 1e-8), 0, 1)
 
-    # --- AUROC ---
+    # --- 4) Metrics & best F1 threshold on VAL (both classes present) ---
     auroc = roc_auc_score(y_true, y_score)
-
-    # --- Best F1 threshold ---
     prec, rec, thr = precision_recall_curve(y_true, y_score)
     f1s = 2 * prec * rec / (prec + rec + 1e-8)
-    best_idx = np.argmax(f1s)
-    best_thr = thr[best_idx]
-    best_f1 = f1s[best_idx]
+    i = int(np.nanargmax(f1s))
+    best_thr, best_f1 = (thr[i], f1s[i]) if i < len(thr) else (0.5, 0.0)
 
-    # --- Preds with best threshold ---
-    y_pred = (y_score >= best_thr).astype(int)
-    f1 = f1_score(y_true, y_pred)
+    # sanity: recompute
+    f1_chk = f1_score(y_true, (y_score >= best_thr).astype(int))
 
-    print(f"✅ Validation Results:")
-    print(f"   - Best threshold: {best_thr:.4f}")
-    print(f"   - F1 (from curve): {best_f1:.4f}")
-    print(f"   - F1 (recomputed): {f1:.4f}")
-    print(f"   - AUROC: {auroc:.4f}")
+    print("Validation (OK gallery from TRAIN):")
+    print(f"   Best threshold: {best_thr:.4f}")
+    print(f"   F1 (curve)   : {best_f1:.4f}")
+    print(f"   F1 (recheck) : {f1_chk:.4f}")
+    print(f"   AUROC        : {auroc:.4f}")
 
-    return best_thr, best_f1, auroc
+    return best_thr, best_f1, auroc, (float(lo), float(hi))
+
 
 def plot_tsne(embs, labels, paths, dim=2):
     # t-SNE on normalized embeddings; Euclidean ~ cosine on unit sphere
@@ -662,8 +663,6 @@ def plot_tsne(embs, labels, paths, dim=2):
         raise ValueError("dim must be 2 or 3")
 
 # --- Adaptive margin controller (cosine triplet) ---
-from dataclasses import dataclass
-
 @dataclass
 class MarginCtrlState:
     ema_val_active: float = None
