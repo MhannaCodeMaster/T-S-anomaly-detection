@@ -38,6 +38,9 @@ def get_paths(category: str, proc: str):
             logs=root / "train_log.json",
             manifest=root / "crop_manifest.jsonl",
             config=root / "config.yaml",
+            metrics = root / "metrics.npz",
+            gallery = root / "gallery_embeddings.pt",
+            tsne = root / "TSNE.png",
         )
     elif proc == "pipeline":
         root = ARTIFACTS_BASE / "pipeline" / category / run_id

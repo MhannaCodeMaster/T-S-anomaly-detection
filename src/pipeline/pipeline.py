@@ -23,6 +23,14 @@ from src.paths import get_paths
 
 def main():
     args = load_args()
+    
+    #-------- Path to save the run ----------#
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = f"/kaggle/working/test/{args.category.lower()}/{ts}_{args.category.lower()}"
+    os.makedirs(run_dir, exist_ok=True)
+    os.makedirs(os.path.join(run_dir, "crops"),  exist_ok=True)
+    os.makedirs(os.path.join(run_dir, "images"), exist_ok=True)
+    
     teacher = ResNet18_MS3(pretrained=True)
     student = ResNet18_MS3(pretrained=False)
     triplet = TripletEmbedder(pretrained=False)
@@ -49,9 +57,19 @@ def main():
     student.load_state_dict(st_saved_dict['state_dict'])
     student.cuda()
     
-    tl_saved_dict = torch.load(args.tl_path)
+    tl_path = args.tl_path
+    tl_model = tl_path / "triplet_best.pth.tar"
+    tl_metrics = tl_path / "metrics.npz"
+    tl_gallery  = tl_path / "gallery_embeddings.pt"
+    
+    # Loading the triplet model
+    tl_saved_dict = torch.load(tl_model)
     triplet.load_state_dict(tl_saved_dict['state_dict'])
     triplet.cuda()
+    
+    # Loading the best threshold
+    data = np.load(tl_metrics)
+    best_thr = float(data["best_thr"])
     
     test_loader = load_test_datasets(st_transform, args)
     mean, std = load_calibration_stats(args.calibration)
@@ -67,8 +85,8 @@ def main():
         # crops, boxes, image_paths = crop_images(test_err_map, [(x,y,_,paths)], mean, std, args)
         # print('Image used:', image_paths)
         
-        for (crops, boxes, img_path) in crop_images_iter(test_err_map, [(paths, x)], mean, std, args):
-            res2 = triplet_classifier_knn(triplet, tl_transform, boxes, [img_path], crops, args,
+        for (crops, boxes, img_path) in crop_images_iter(test_err_map, [(paths, x)], mean, std, args, run_dir):
+            res2 = triplet_classifier_knn(triplet, tl_transform, boxes, [img_path], crops, best_thr, tl_gallery,
                                         k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
             
             label = get_mvtec_label(img_path)
@@ -193,7 +211,7 @@ def crop_images(loss_map, loader, mean, std, args):
     print("\nCropping images completed.",end="\n")
     return crops, boxes, orig_img_path
 
-def crop_images_iter(loss_map, loader_or_batch, mean, std, args, save_debug=True):
+def crop_images_iter(loss_map, loader_or_batch, mean, std, args, root):
     """
     Yields per-image: (crops:list[np.ndarray], boxes:list[xywh], image_path:str)
 
@@ -213,25 +231,17 @@ def crop_images_iter(loss_map, loader_or_batch, mean, std, args, save_debug=True
         raise ValueError("crop_images_iter expects a DataLoader or (paths, images) batch.")
 
     #--------- CONFIG -----------#
-    CATEGORY       = args.category
+    CATEGORY         = args.category
     ENABLE_BOX_MERGE = args.merge_box
-    GAP_PX        = args.merge_gap
-    HM_THR        = args.h_th
-    BOX_MIN_AREA  = args.box_min_area
-    SCORE_THR     = args.conf_score
-    NMS_THR       = args.nms_thr
-    EXPAND_BOX    = args.expand_box
-    TOLERANCE     = args.tolerance
+    GAP_PX           = args.merge_gap
+    HM_THR           = args.h_th
+    BOX_MIN_AREA     = args.box_min_area
+    SCORE_THR        = args.conf_score
+    NMS_THR          = args.nms_thr
+    EXPAND_BOX       = args.expand_box
+    TOLERANCE        = args.tolerance
     #----------------------------#
-
-    # One run directory for all images (cleaner)
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_dir = f"/kaggle/working/eval/{CATEGORY.lower()}/{ts}_{CATEGORY.lower()}"
-    if save_debug:
-        os.makedirs(os.path.join(run_dir, "crops"),  exist_ok=True)
-        os.makedirs(os.path.join(run_dir, "images"), exist_ok=True)
-
-    # print(f"Starting cropping images… [0/{total}]", end="\r")
+    
     idx_global = 0
 
     for paths, _ in iterable:                    # <<== (paths, images)
@@ -239,6 +249,7 @@ def crop_images_iter(loss_map, loader_or_batch, mean, std, args, save_debug=True
         hm_batch = loss_map[idx_global: idx_global + bs]
 
         for k, p in enumerate(paths):
+            print(f"processing image: {p}", end="\r")
             hm64 = hm_batch[k]
             img = cv2.imread(p)
             if img is None:
@@ -279,32 +290,27 @@ def crop_images_iter(loss_map, loader_or_batch, mean, std, args, save_debug=True
                 x0, y0, x1, y1 = pad_box(x, y, w, h, H, W, pad_ratio=0.05)
                 crops.append(img[y0:y1, x0:x1])
 
-            # debug saves
-            if save_debug:
-                stem   = Path(p).stem
-                defect = Path(p).parent.name
+            stem   = Path(p).stem
+            defect = Path(p).parent.name
 
-                # visuals
-                hm_gray  = (np.clip(hm_z, 0, None) / (hm_z.max() + 1e-6) * 255.0).astype(np.uint8)
-                hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
-                overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
-                boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
+            # visuals
+            hm_gray  = (np.clip(hm_z, 0, None) / (hm_z.max() + 1e-6) * 255.0).astype(np.uint8)
+            hm_color = cv2.applyColorMap(hm_gray, cv2.COLORMAP_JET)
+            overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
+            boxes_vis = draw_boxes(overlay, boxes, color=(0, 0, 255), thickness=2)
 
-                # save
-                for bi, crop in enumerate(crops):
-                    cv2.imwrite(os.path.join(run_dir, "crops", f"{defect}_{stem}_box{bi}.png"), crop)
-                cv2.imwrite(os.path.join(run_dir, "images", f"{defect}_{stem}_orig.png"),    img)
-                cv2.imwrite(os.path.join(run_dir, "images", f"{defect}_{stem}_overlay.png"), overlay)
-                cv2.imwrite(os.path.join(run_dir, "images", f"{defect}_{stem}_mask.png"),    mask)
-                cv2.imwrite(os.path.join(run_dir, "images", f"{defect}_{stem}_boxes.png"),   boxes_vis)
+            # save
+            for bi, crop in enumerate(crops):
+                cv2.imwrite(os.path.join(root, "crops", f"{defect}_{stem}_box{bi}.png"), crop)
+            cv2.imwrite(os.path.join(root, "images", f"{defect}_{stem}_orig.png"),    img)
+            cv2.imwrite(os.path.join(root, "images", f"{defect}_{stem}_overlay.png"), overlay)
+            cv2.imwrite(os.path.join(root, "images", f"{defect}_{stem}_mask.png"),    mask)
+            cv2.imwrite(os.path.join(root, "images", f"{defect}_{stem}_boxes.png"),   boxes_vis)
 
             idx_global += 1
-            # print(f"Cropping images… [{idx_global}/{total}]", end="\r")
 
             # yield per-image
             yield crops, boxes, p
-
-    # print("\nCropping images completed.")
 
 def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
@@ -312,12 +318,10 @@ def load_args():
     p.add_argument("--dataset", required=True, type=str, help="Dataset root path")
     p.add_argument("--category", required=True, type=str, help="Dataset category (e.g., cable, hazelnut)")
     p.add_argument("--st_path", required=True, type=str, help="Student model path")
-    p.add_argument("--h_th", required=False, default=99, type=float, help="Heatmap_threshold")
-    p.add_argument("--tl_path", required=True, type=str, help="Triplet model path")
+    p.add_argument("--h_th", required=True, default=99, type=float, help="Heatmap threshold")
     p.add_argument("--calibration", required=True, type=str, help="Calibration path")
-    p.add_argument("--emd_gal", required=True, type=str, help="Saved embeddings gallery")
-    
-    p.add_argument("--pred_thr", required=False, default=0.8, type=float, help="triplet model prediction threshold")
+    p.add_argument("--tl_path", required=True, type=str, help="Triplet path (path of metrics, trained model, gallery)")
+     
     p.add_argument("--box_min_area", required=False, default=600, type=int, help="Minimum box area")
     p.add_argument("--conf_score", required=False, default=0.1, type=float, help="Confidence score")
     p.add_argument("--nms_thr", required=False, default=0.4, type=float, help="NMS threshold")
@@ -441,14 +445,14 @@ def triplet_classifer(model, transform, boxes, image_paths, crops, args,
 
 @torch.no_grad()
 def triplet_classifier_knn(
-    model, transform, boxes, image_paths, crops, args,
+    model, transform, boxes, image_paths, crops, pred_thr, emd_gal,
     k=15, device="cuda", tau=0.25, prior_correction=True,
     SIM_MIN=0.15,   # ignore neighbors with cosine below this
 ):
-    PRED_THRESHOLD = float(args.pred_thr)
+    PRED_THRESHOLD = float(pred_thr)
     orig_image_path = image_paths[0]
 
-    gal_pkg = torch.load(args.emd_gal, map_location="cpu", weights_only=False)
+    gal_pkg = torch.load(emd_gal, map_location="cpu", weights_only=False)
     Zg = torch.as_tensor(gal_pkg["embeddings"], dtype=torch.float32)   # [N,D]
     yg = torch.as_tensor(gal_pkg["labels"], dtype=torch.long)          # [N] (0 OK, 1 DEF)
     Zg = F.normalize(Zg, dim=1)

@@ -1,4 +1,5 @@
 import os
+from types import SimpleNamespace
 import cv2
 import numpy as np
 import pandas as pd
@@ -133,9 +134,23 @@ def load_calibration_stats(cali_path):
 
 def save_config(cfg, path):
     config_save_path = os.path.join(path, "config.yaml")
+    
+    # Convert SimpleNamespace → dict (recursively handles nested ones)
+    def ns_to_dict(ns):
+        if isinstance(ns, SimpleNamespace):
+            return {k: ns_to_dict(v) for k, v in vars(ns).items()}
+        elif isinstance(ns, list):
+            return [ns_to_dict(v) for v in ns]
+        elif isinstance(ns, dict):
+            return {k: ns_to_dict(v) for k, v in ns.items()}
+        else:
+            return ns
+        
+    cfg_dict = ns_to_dict(cfg)
     try:
         with open(config_save_path, 'w') as file:
-            yaml.dump(cfg, file)
+            yaml.dump(cfg_dict, file, sort_keys=False, default_flow_style=False)
+        print("Config file saved")
     except Exception as e:
         print(f"Error saving configuration to {config_save_path}: {e}")
         exit(1)

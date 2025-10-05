@@ -6,7 +6,10 @@ from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 import torchvision.transforms.functional as TF
 import random
-from sklearn.metrics import roc_auc_score, average_precision_score, f1_score
+from sklearn.metrics import precision_recall_curve, f1_score, roc_auc_score
+from sklearn.neighbors import NearestNeighbors
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
 
 from src.triplet.triplet import *
 from src.data.data_utils import *
@@ -22,17 +25,37 @@ def main():
     cfg = load_config(args)
     cfg = override_config(cfg, args)
     paths = get_paths(cfg.category, 'triplet')
+    save_config(cfg, paths.root)
     print("Training on category: ", cfg.category)
-
+ 
     triplet = TripletEmbedder(pretrained=True)
     triplet.cuda()
     train_loader, val_loader = load_tl_training_datasets(cfg, paths)
     train_triplet(triplet, train_loader, val_loader, cfg, paths)
-   
-   
+    
+    # ---- Post-training evaluation ----
+    print("Calculating best F1 scord and AUROC to get the best threshold for classification...")
+    best_thr, best_f1, auroc = evaluate_triplet_on_val(triplet, val_loader, device="cuda")
+    print(f"\nBest threshold = {best_thr:.4f}, F1 = {best_f1:.4f}, AUROC = {auroc:.4f}")
+    print("Calculation completed")
+    np.savez(paths.metrics,
+             best_thr=best_thr, best_f1=best_f1, auroc=auroc)
+    
+    # Building gallery of embeddings
+    print ("Buidling embeddings gallery using train dataset...")
+    emd, labels = extract_embeddings(triplet, train_loader, device="cuda")
+    torch.save({
+        "embeddings": emd,    # float32, [N, D]
+        "labels": labels       # long, [N]
+    }, paths.gallery)
+    print ("Embedding gallery saved")
+    #---- Using T-SNE for visualizing how the validation dataset are clustered in a 2D or 3D space
+    plot_tsne(emd, labels, args)
+    print(f"Training artifacts are saved under: {paths.root}")
+    
+    
 def train_triplet(model , train_loader, val_loader, cfg, paths):
-    print("Starting triplet learning...")
-
+    print("Starting triplet learning process...")
     #----------- CONFIG -----------#
     CATEGORY     = cfg.category
     TOTAL_EPOCHS = int(cfg.epochs)
@@ -52,8 +75,8 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     ema_val_active        = None
 
     # early stopping
-    ES_PATIENCE  = getattr(cfg, "es_patience", 20)       # epochs with no meaningful improvement
-    ES_MIN_DELTA = getattr(cfg, "es_min_delta", 1e-3)    # minimum improvement in val_loss
+    ES_PATIENCE  = int(getattr(cfg, "es_patience", 20))       # epochs with no meaningful improvement
+    ES_MIN_DELTA = float(getattr(cfg, "es_min_delta", 1e-3))    # minimum improvement in val_loss
     best_val_loss = float("inf")
     es_bad_epochs = 0
 
@@ -66,6 +89,8 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         margin=MARGIN)
     
     for epoch in range(TOTAL_EPOCHS):
+        print(f"Epoch [{epoch+1}/{TOTAL_EPOCHS}]\n")
+        print("Training triplet...", end='\r')
         model.train()
         total_train_loss, total_train_triplets = 0.0, 0
         train_active, train_active_total, train_batches = 0, 0, 0
@@ -107,6 +132,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         #---------------- TRAIN END ----------------# 
         
         #---------------- VAL START ----------------#
+        print("Evaluating on val dataset...", end='\r')
         val_total_loss, val_total_triplets, val_contrib_batches = 0.0, 0, 0
         val_active, val_active_total = 0,0
         avg_val_loss = 0.0
@@ -137,6 +163,19 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         print(f"Validation stats - Epoch {epoch+1} -  avg val loss: {avg_val_loss:.4f} - val active={epoch_active_pct}")
         #---------------- VAL END ----------------#
 
+        #----- Changing Margin based on val active
+        new_margin = -1
+        if epoch_active_pct > 35:
+            new_margin = max(0.1, MARGIN-0.05)
+        elif epoch_active_pct < 20:
+            new_margin = min(1, MARGIN+0.05)
+        
+        # Updating margin
+        if new_margin != -1:
+            print(f"Updating margin {MARGIN} -> {new_margin} ")
+            MARGIN = new_margin
+            triplet_loss.margin = MARGIN
+        
         #----- best/early stop -----
         improved = (best_val_loss - avg_val_loss) > ES_MIN_DELTA
         if improved:
@@ -307,7 +346,6 @@ def mine_triplets_v1(
         torch.tensor(nL, dtype=torch.long, device=device),
     )
 
-   
 def mining_active(z, y, margin):
     B = y.size(0)
     D = 1.0 - z @ z.t()
@@ -377,16 +415,6 @@ def load_tl_training_datasets(cfg, paths):
         transforms.RandomAutocontrast(p=0.2),
         transforms.RandomAdjustSharpness(sharpness_factor=1.5, p=0.2),
         transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8)),
-        # --- Zoom IN: crop a smaller area & resize back to 224x224
-        transforms.RandomApply([
-            transforms.RandomResizedCrop(
-                size=224,
-                scale=(0.70, 1.00),          # 70%..100% of area -> zoom-in
-                ratio=(0.90, 1.10),          # keep aspect near 1:1 for cables
-                interpolation=InterpolationMode.BILINEAR
-            )
-        ], p=0.50),
-
         # --- Zoom OUT + slight shifts/rotations (center preserved)
         transforms.RandomApply([
             transforms.RandomAffine(
@@ -398,8 +426,6 @@ def load_tl_training_datasets(cfg, paths):
                 fill=0                        # or tuple of means if you prefer
             )
         ], p=0.80),
-
-        # (Optional) Tiny perspective jitter if cables can bend
         transforms.RandomApply([transforms.RandomPerspective(distortion_scale=0.15, p=1.0)], p=0.20),
         transforms.ToTensor(),
         transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
@@ -443,6 +469,7 @@ def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
     #----- Required args -----#
     p.add_argument("--dataset", required=True, type=str, help="Path to the folder crops with ok/not ok dataset root directory")
+    p.add_argument("--config", required=True, type=str, help="Triplet training config file path")
     
     #----- Optional args -----#
     p.add_argument("--category", required=False, type=str, help="Dataset category (e.g., cable, hazelnut)")
@@ -451,8 +478,9 @@ def load_args():
     p.add_argument("--lr", type=float, required=False, help="Learning rate for triplet training")
     p.add_argument("--weight_decay", type=float, required=False, help="Weight decay for triplet training")
     p.add_argument("--momentum", type=float, required=False, help="Momentum for triplet training")
-    p.add_argument("--config", required=False, type=str, help="Config path")
     p.add_argument("--margin", required=False, type=str, help="Triplet margin")
+    p.add_argument("--es_patience", required=False, type=int, help="Early stop epoch patience")
+    p.add_argument("--es_min_delta", required=False, type=int, help="Early stop min delta")
 
     args = p.parse_args()
     return args
@@ -538,6 +566,100 @@ def mining_stats(emb, labels, margin: float, kth: int = 5):
     delta   = hardest_pos[valid] - kth_vals + margin
     active  = (delta > 0).float()
     return active.mean().item() * 100.0
+
+@torch.no_grad()
+def extract_embeddings(model, loader, device="cuda"):
+    model.eval()
+    embs, labels = [], []
+    for x, y, _, _ in loader:
+        x = x.to(device, non_blocking=True)
+        z = model(x)                     # already L2-normalized (B, D)
+        embs.append(z.cpu())
+        labels.append(y.cpu())
+    embs = torch.cat(embs, dim=0).numpy()     # (N, D)
+    labels = torch.cat(labels, dim=0).numpy() # (N,)
+    return embs, labels
+
+@torch.no_grad()
+def evaluate_triplet_on_val(triplet, val_loader, device="cuda"):
+    print("\n🔍 Evaluating Triplet model on validation set...")
+
+    emd, label = extract_embeddings(triplet, val_loader, device=device)
+    print(f"Extracted {len(label)} embeddings from val set")
+
+    ok_mask = (label == 0)
+    knn = NearestNeighbors(n_neighbors=5, metric='cosine')
+    knn.fit(emd[ok_mask])
+    dist, _ = knn.kneighbors(emd)
+    anomaly_score = dist.mean(axis=1)  # higher = more defective
+
+    y_true = label
+    y_score = anomaly_score
+
+    # --- AUROC ---
+    auroc = roc_auc_score(y_true, y_score)
+
+    # --- Best F1 threshold ---
+    prec, rec, thr = precision_recall_curve(y_true, y_score)
+    f1s = 2 * prec * rec / (prec + rec + 1e-8)
+    best_idx = np.argmax(f1s)
+    best_thr = thr[best_idx]
+    best_f1 = f1s[best_idx]
+
+    # --- Preds with best threshold ---
+    y_pred = (y_score >= best_thr).astype(int)
+    f1 = f1_score(y_true, y_pred)
+
+    print(f"✅ Validation Results:")
+    print(f"   - Best threshold: {best_thr:.4f}")
+    print(f"   - F1 (from curve): {best_f1:.4f}")
+    print(f"   - F1 (recomputed): {f1:.4f}")
+    print(f"   - AUROC: {auroc:.4f}")
+
+    return best_thr, best_f1, auroc
+
+def plot_tsne(embs, labels, paths, dim=2):
+    # t-SNE on normalized embeddings; Euclidean ~ cosine on unit sphere
+    print("Plotting TSNE...")
+    tsne = TSNE(
+        n_components=dim,
+        init="pca",
+        perplexity=30,
+        learning_rate="auto",
+        metric="euclidean",
+        random_state=42,
+        n_iter=1000,
+        verbose=1,
+    )
+    Z = tsne.fit_transform(embs)  # (N, 2)
+
+    if dim == 2:
+        plt.figure(figsize=(7, 6), dpi=120)
+        for u in np.unique(labels):
+            m = labels == u
+            plt.scatter(Z[m, 0], Z[m, 1], s=14, alpha=0.85, label=str(u))
+        plt.title("t-SNE of Triplet Embeddings (val)")
+        plt.xlabel("t-SNE 1"); plt.ylabel("t-SNE 2")
+        plt.legend(title="Label", frameon=True)
+        plt.tight_layout()
+        plt.savefig(paths.tsne, bbox_inches="tight")
+        plt.show()
+        plt.close()
+    elif dim == 3:
+        fig = plt.figure(figsize=(8, 6), dpi=120)
+        ax = fig.add_subplot(111, projection="3d")
+        for u in np.unique(labels):
+            m = labels == u
+            ax.scatter(Z[m, 0], Z[m, 1], Z[m, 2], s=14, alpha=0.85, label=str(u))
+        ax.set_title("t-SNE (3D) of Triplet Embeddings (val)")
+        ax.set_xlabel("t-SNE 1"); ax.set_ylabel("t-SNE 2"); ax.set_zlabel("t-SNE 3")
+        ax.legend(title="Label")
+        fig.tight_layout()
+        fig.savefig(paths.tsne, bbox_inches="tight")
+        plt.show()
+        plt.close(fig)
+    else:
+        raise ValueError("dim must be 2 or 3")
 
 
 # @torch.no_grad()
