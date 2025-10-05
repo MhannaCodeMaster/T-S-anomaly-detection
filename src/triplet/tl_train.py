@@ -95,7 +95,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
         margin=MARGIN)
     state = MarginCtrlState(margin=MARGIN)
-    mine_mode = "semi-hard"
+    mine_mode = cfg.mine_mode
     
     for epoch in range(TOTAL_EPOCHS):
         print(f"Epoch [{epoch+1}/{TOTAL_EPOCHS}]")
@@ -145,12 +145,17 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         val_total_loss, val_total_triplets, val_contrib_batches = 0.0, 0, 0
         val_active, val_active_total = 0,0
         avg_val_loss = 0.0
+        val_embs, val_labels = [], []
         model.eval()
         with torch.no_grad():
             for x, y, _, _ in val_loader:
                 x = x.cuda()
                 y = y.cuda()
                 z = model(x)
+                
+                # collecting embeddings for AUROC/F1
+                val_embs.append(z.cpu())
+                val_labels.append(y.cpu())
                 
                 # a, p, n = mine_batch(z.detach(), y, MARGIN)
                 # a, p, n = mine_triplets(z.detach(), y)
@@ -170,6 +175,21 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
         v_epoch_active_pct = 100.0 * val_active / val_active_total if val_active_total > 0 else 0.0
         avg_val_loss = val_total_loss / len(val_loader)
         print(f"Validation stats - Epoch {epoch+1} -  avg val loss: {avg_val_loss:.4f} - val active={v_epoch_active_pct}")
+        
+        E = torch.cat(val_embs, dim=0)
+        Y = torch.cat(val_labels, dim=0).numpy()
+
+        # Compute distance to OK centroid (simple fast anomaly scoring)
+        ok_center = E[Y == 0].mean(dim=0, keepdim=True)
+        dist = 1 - (E @ ok_center.T).squeeze()         # cosine distance (1 - sim)
+        dist = (dist - dist.min()) / (dist.max() - dist.min() + 1e-8)  # scale [0,1]
+
+        # Compute AUROC & F1
+        auroc = roc_auc_score(Y, dist.numpy())
+        thr = 0.5  # you can sweep thresholds or auto-tune
+        preds = (dist.numpy() >= thr).astype(int)
+        f1 = f1_score(Y, preds)
+        print(f"Validation metrics - AUROC={auroc:.4f}, F1={f1:.4f}")
         #---------------- VAL END ----------------#
         
         #----- Changing Margin
@@ -468,6 +488,7 @@ def load_args():
     p.add_argument("--weight_decay", type=float, required=False, help="Weight decay for triplet training")
     p.add_argument("--momentum", type=float, required=False, help="Momentum for triplet training")
     p.add_argument("--margin", required=False, type=str, help="Triplet margin")
+    p.add_argument("--mine_mode", required=False, default = "semi-hard", type=str, help="Triplet mining mode (random, semi-hard, hard)" )
     p.add_argument("--es_patience", required=False, type=int, help="Early stop epoch patience")
     p.add_argument("--es_min_delta", required=False, type=int, help="Early stop min delta")
 
