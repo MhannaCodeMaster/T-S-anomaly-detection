@@ -1,5 +1,6 @@
 import os
 from types import SimpleNamespace
+from dataclasses import dataclass
 
 import torch
 from torchvision import transforms
@@ -89,6 +90,8 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
         distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
         margin=MARGIN)
+    ctrl = MarginCtrlState(margin=MARGIN)
+    mine_mode = "semi-hard"
     
     for epoch in range(TOTAL_EPOCHS):
         print(f"Epoch [{epoch+1}/{TOTAL_EPOCHS}]")
@@ -107,7 +110,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             # we take one anchor, one positive, and one negative
             # a, p, n = mine_batch(z.detach(), y, MARGIN)
             # a, p, n = mine_triplets(z.detach(), y)
-            a, p, n = mine_triplets_v1(z.detach(), y, margin=MARGIN)
+            a, p, n = mine_triplets_v1(z.detach(), y, mode=mine_mode, margin=MARGIN)
             if len(a) == 0:
                 continue
             
@@ -128,9 +131,9 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
 
         sched.step()
         #---- Training Metrics ----#
-        epoch_active_pct = 100.0 * train_active / train_active_total if train_active_total > 0 else 0.0
+        t_epoch_active_pct = 100.0 * train_active / train_active_total if train_active_total > 0 else 0.0
         avg_train_loss = total_train_loss / len(train_loader)
-        print(f"Training stats - Epoch {epoch+1} -  avg train loss: {avg_train_loss:.4f} - train active={epoch_active_pct}")
+        print(f"Training stats - Epoch {epoch+1} -  avg train loss: {avg_train_loss:.4f} - train active={t_epoch_active_pct}")
         #---------------- TRAIN END ----------------# 
         
         #---------------- VAL START ----------------#
@@ -160,24 +163,23 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
                 val_active_total += total
             
         #---- Val Metrics ----#
-        epoch_active_pct = 100.0 * val_active / val_active_total if val_active_total > 0 else 0.0
+        v_epoch_active_pct = 100.0 * val_active / val_active_total if val_active_total > 0 else 0.0
         avg_val_loss = val_total_loss / len(val_loader)
-        print(f"Validation stats - Epoch {epoch+1} -  avg val loss: {avg_val_loss:.4f} - val active={epoch_active_pct}")
+        print(f"Validation stats - Epoch {epoch+1} -  avg val loss: {avg_val_loss:.4f} - val active={v_epoch_active_pct}")
         #---------------- VAL END ----------------#
 
-        #----- Changing Margin based on val active
-        new_margin = -1
-        if epoch_active_pct > 35:
-            new_margin = max(0.1, MARGIN-0.05)
-        elif epoch_active_pct < 20:
-            new_margin = min(1, MARGIN+0.05)
-        
-        # Updating margin
-        if new_margin != -1:
-            print(f"Updating margin {MARGIN} -> {new_margin} ")
-            MARGIN = new_margin
-            triplet_loss.margin = MARGIN
-        
+        #----- Changing Margin
+        ctrl, new_margin, why = update_margin(
+            ctrl,
+            train_active_pct=t_epoch_active_pct,
+            val_active_pct=v_epoch_active_pct,
+            mode=mine_mode
+        )
+
+        if abs(new_margin - triplet_loss.margin) > 1e-9:
+            print(f"[Margin] {triplet_loss.margin:.3f} -> {new_margin:.3f} ({why})")
+            triplet_loss.margin = float(new_margin)
+                
         #----- best/early stop -----
         improved = (best_val_loss - avg_val_loss) > ES_MIN_DELTA
         if improved:
@@ -662,6 +664,82 @@ def plot_tsne(embs, labels, paths, dim=2):
         plt.close(fig)
     else:
         raise ValueError("dim must be 2 or 3")
+
+# --- Adaptive margin controller (cosine triplet) ---
+@dataclass
+class MarginCtrlState:
+    ema_val_active: float = None
+    cooldown: int = 0
+    margin: float = 0.40  # initial margin
+
+def update_margin(
+    state: MarginCtrlState,
+    train_active_pct: float,
+    val_active_pct: float,
+    mode: str,                      # "semi-hard" or "hard"
+    *,
+    target_low: float = 30.0,       # desired active% band
+    target_high: float = 40.0,
+    ema_beta: float = 0.8,          # EMA smoothing for val_active%
+    min_margin: float = 0.20,
+    max_margin: float = 0.70,
+    min_step: float = 0.02,
+    max_step: float = 0.06,
+    cooldown_epochs: int = 2,       # wait epochs after a change
+    starvation_floor: float = 12.0  # if train_active% < this, don't shrink
+):
+    M = state.margin
+    # EMA for validation active%
+    if state.ema_val_active is None:
+        state.ema_val_active = val_active_pct
+    else:
+        state.ema_val_active = ema_beta * state.ema_val_active + (1 - ema_beta) * val_active_pct
+    v = state.ema_val_active
+    t_mid = 0.5 * (target_low + target_high)
+
+    new_M = M
+    reason = "hold"
+
+    # Cooldown: avoid thrashing
+    if state.cooldown > 0:
+        state.cooldown -= 1
+        return state, new_M, reason
+
+    # 1) Guardrail for semi-hard: prevent starvation-driven shrinking
+    if mode.lower() == "semi-hard" and train_active_pct < starvation_floor:
+        # training too easy -> we need *more* violating negatives; do NOT reduce margin
+        # Optionally, slightly INCREASE the margin (within cap) to revive semi-hard candidates
+        step = max(min_step, min(max_step, (starvation_floor - train_active_pct) / 100.0))
+        new_M = min(max_margin, M + step)
+        reason = f"train-starved (train_active={train_active_pct:.1f}%), increase"
+    else:
+        # 2) Normal band control using EMA(val_active%)
+        if v > target_high:
+            # too many violators -> REDUCE margin a bit
+            # but not below min_margin
+            # step scales with how far we are outside band
+            delta = (v - target_high) / 100.0
+            step = max(min_step, min(max_step, delta))
+            new_M = max(min_margin, M - step)
+            reason = f"val too high (EMA={v:.1f}%), decrease"
+        elif v < target_low:
+            # too few violators -> INCREASE margin
+            delta = (target_low - v) / 100.0
+            step = max(min_step, min(max_step, delta))
+            new_M = min(max_margin, M + step)
+            reason = f"val too low (EMA={v:.1f}%), increase"
+        else:
+            # within band -> hold
+            new_M = M
+            reason = f"in band (EMA={v:.1f}%), hold"
+
+    # 3) Apply change if any (with cooldown)
+    changed = abs(new_M - M) >= 1e-6
+    if changed:
+        state.margin = new_M
+        state.cooldown = cooldown_epochs
+
+    return state, new_M, reason
 
 
 # @torch.no_grad()
