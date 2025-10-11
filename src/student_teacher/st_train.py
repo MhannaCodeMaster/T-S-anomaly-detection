@@ -18,6 +18,8 @@ def main():
     cfg = load_config()
     cfg = override_config(cfg, args)
     paths = get_paths(cfg.category, 'student')
+    
+    save_config(cfg, paths.root)
 
     # Checking if device support cuda.
     if not torch.cuda.is_available():
@@ -42,9 +44,9 @@ def main():
     
     # train student model
     train_loader, val_loader = load_st_train_datasets(transform, cfg)
-    student = train_student(teacher, student, train_loader, val_loader, cfg, paths)
+    best_student = train_student(teacher, student, train_loader, val_loader, cfg, paths)
     # Compute calibration stats on training
-    mean, std = compute_train_calibration_stats(teacher, student, train_loader, paths, device="cuda")
+    mean, std = compute_train_calibration_stats(teacher, best_student, train_loader, paths, device="cuda")
     
     print("Student model training Completed.")
 
@@ -56,6 +58,7 @@ def train_student(teacher, student, train_loader, val_loader, cfg, paths):
     MOMENTUM = float(cfg.momentum)
     WGT_DECAY = float(cfg.weight_decay)
     min_err = 10000 # Stores the best validation error so far.
+    
     teacher.eval()  # Teacher model is forzen
     student.train() # Student model is set to training mode
     
@@ -127,7 +130,11 @@ def compute_train_calibration_stats(teacher, student, train_loader, paths, devic
     """
     print("Computing training set calibration stats...")
     teacher.eval(); student.eval()
-    sums, sums2, count = 0.0, 0.0, 0
+    teacher.to(device); student.to(device)
+    
+    sum1 = torch.zeros((), dtype=torch.float64, device=device)
+    sum2 = torch.zeros((), dtype=torch.float64, device=device)
+    count = torch.zeros((), dtype=torch.float64, device=device)
 
     for _, batch_img in train_loader:
         batch_img = batch_img.to(device, non_blocking=True)
@@ -135,25 +142,27 @@ def compute_train_calibration_stats(teacher, student, train_loader, paths, devic
         s_feat = student(batch_img)
 
         # feature mismatch -> (N,1,h,w) per level -> upsample to a common 64x64 -> sum across levels
-        score = 0
+        score = None
         for t, s in zip(t_feat, s_feat):
+            t = F.normalize(t, dim=1)
+            s = F.normalize(s, dim=1)
             # per-pixel channel MSE
-            diff = (t - s).pow(2).mean(dim=1, keepdim=True)   # (N,1,h,w)
+            diff = (t - s).pow(2).sum(dim=1, keepdim=True)   # (N,1,h,w)
             diff64 = F.interpolate(diff, size=(64, 64), mode="bilinear", align_corners=False)
-            score += diff64                                   # (N,1,64,64)
+            score = diff64 if score is None else (score * diff64)
 
-        score_np = score.squeeze(1).float().cpu().numpy()     # (N,64,64)
-        sums  += score_np.sum()
-        sums2 += (score_np ** 2).sum()
-        count += score_np.size
+        flat = score.reshape(-1).to(dtype=torch.float64)
+        sum1  += flat.sum()
+        sum2 += (flat * flat).sum()
+        count += flat.numel()
 
-    mean = sums / max(1, count)
-    var  = (sums2 / max(1, count)) - (mean * mean)
+    mean = (sum1 / count).item()
+    var  = (sum2 / count).item() - mean * mean
     std  = float(np.sqrt(max(var, 1e-12)))
 
     file_path = os.path.join(paths.calibration)
     np.savez(file_path, mean=float(mean), std=float(std))
-    print(f"Calibration saved μ={mean:.6g}, σ={std:.6g}")
+    print(f"Calibration saved μ={mean:.6g}, σ={std:.6g} -> {file_path}")
     return mean, std
 
 def load_args():

@@ -176,6 +176,7 @@ def crop_images(loss_map, loader, mean, std, args):
             overlay  = cv2.addWeighted(img, 1.0, hm_color, 0.35, 0.0)
             
             mask, thr = threshold_heatmap(hm_z, method='percentile', percentile=HM_THR)
+            
             #----------- clean mask -----------#
             K_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))    # remove salt-noise
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, K_open)

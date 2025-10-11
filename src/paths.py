@@ -2,8 +2,18 @@ from pathlib import Path
 from datetime import datetime
 from types import SimpleNamespace
 
-# Hardcoded base path
+# Base path
 ARTIFACTS_BASE = Path("/kaggle/working/artifacts")
+
+# File names
+BEST_STUDENT = "student_best.pth.tar"
+CALIBRATION_STATS = "calib_stats.npz"
+BEST_TRIPLET = "triplet_best.pth.tar"
+CONFIG = "config.yaml"
+TL_METRICS = "tl_metrics.npz"
+GALLERY_EMBS = "gal_embs.pt"
+
+
 
 def make_run_id(category: str) -> str:
     """Generate run_id as YYYY-MM-DD_HH-MM-SS_<category>."""
@@ -26,29 +36,25 @@ def get_paths(category: str, proc: str):
         root = ARTIFACTS_BASE / "student" / category / run_id
         ns = SimpleNamespace(
             root=root,
-            checkpoint=root / "student_best.pth.tar",
-            calibration=root / "calibration_stats.npz",
-            config=root / "config.yaml",
+            checkpoint=root / BEST_STUDENT,
+            calibration=root / CALIBRATION_STATS,
+            config=root / CONFIG,
         )
     elif proc == "triplet":
         root = ARTIFACTS_BASE / "triplet" / category / run_id
         ns = SimpleNamespace(
             root=root,
-            checkpoint=root / "triplet_best.pth.tar",
-            logs=root / "train_log.json",
-            manifest=root / "crop_manifest.jsonl",
-            config=root / "config.yaml",
-            metrics = root / "metrics.npz",
-            gallery = root / "gallery_embeddings.pt",
-            tsne = root / "TSNE.png",
+            checkpoint=root / BEST_TRIPLET,
+            config=root / CONFIG,
+            metrics = root / TL_METRICS,
+            gallery = root / GALLERY_EMBS,
+            tsne = root / "tsne.png",
         )
     elif proc == "pipeline":
         root = ARTIFACTS_BASE / "pipeline" / category / run_id
         ns = SimpleNamespace(
             root=root,
-            predictions=root / "pipeline_predictions.jsonl",
-            metrics=root / "pipeline_metrics.json",
-            config=root / "config.yaml",
+            config=root / CONFIG,
         )
 
     # Ensure directories exist
