@@ -264,7 +264,7 @@ def crop_images_iter(loss_map, loader_or_batch, mean, std, args, root):
     
     idx_global = 0
 
-    for paths, _ in iterable:                    # <<== (paths, images)
+    for paths, _ in iterable:  # (paths, images)
         bs = len(paths)
         hm_batch = loss_map[idx_global: idx_global + bs]
 

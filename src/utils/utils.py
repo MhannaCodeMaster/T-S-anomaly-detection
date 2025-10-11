@@ -77,7 +77,7 @@ def get_error_map_v1(teacher, student, loader_or_batch):
     loss_map = np.zeros((N, 64, 64), dtype=np.float32)
     i = 0
 
-    for paths, batch_img in iterable:      # <<== (paths, images)
+    for paths, batch_img in iterable:
         batch_img = batch_img.cuda(non_blocking=True)
 
         # forward

@@ -9,7 +9,6 @@ import numpy as np
 from src.student_teacher.teacher import ResNet18_MS3
 from src.data.data_utils import *
 
-from conf.config import *
 from src.utils.utils import *
 from src.paths import get_paths
 
@@ -19,33 +18,35 @@ def main():
     cfg = load_config()
     cfg = override_config(cfg, args)
     paths = get_paths(cfg.category, 'student')
-    print("Training on category: ", cfg.category)
-    try:
-        teacher = ResNet18_MS3(pretrained=True)
-        student = ResNet18_MS3(pretrained=False)
 
-        teacher.cuda()
-        student.cuda()
-        
-        np.random.seed(0)
-        torch.manual_seed(0)
-        
-        transform = transforms.Compose([
-            transforms.Resize([256, 256]),
-            transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0.02),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-        
-        # train student model
-        train_loader, val_loader = load_st_train_datasets(transform, cfg)
-        student = train_student(teacher, student, train_loader, val_loader, cfg, paths)
-        # Compute calibration stats on training
-        compute_train_calibration_stats(teacher, student, train_loader, paths, device="cuda")   
-    except Exception as e:
-        print("Error has occured: ", e)
+    # Checking if device support cuda.
+    if not torch.cuda.is_available():
+        print("CUDA is not available. Training requires a CUDA-enabled GPU.")
+
+    print("Training on category: ", cfg.category)
+    teacher = ResNet18_MS3(pretrained=True)
+    student = ResNet18_MS3(pretrained=False)
+
+    teacher.cuda()
+    student.cuda()
     
-    print("Student model training started...")
+    np.random.seed(0)
+    torch.manual_seed(0)
+    
+    transform = transforms.Compose([
+        transforms.Resize([256, 256]),
+        transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0.02),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    # train student model
+    train_loader, val_loader = load_st_train_datasets(transform, cfg)
+    student = train_student(teacher, student, train_loader, val_loader, cfg, paths)
+    # Compute calibration stats on training
+    mean, std = compute_train_calibration_stats(teacher, student, train_loader, paths, device="cuda")
+    
+    print("Student model training Completed.")
 
 
 def train_student(teacher, student, train_loader, val_loader, cfg, paths):

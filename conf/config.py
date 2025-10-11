@@ -67,16 +67,6 @@ def load_args():
     args = p.parse_args()
     return args
 
-def set_deep(cfg, dotted_key, value):
-    """Set cfg['a']['b']['c'] = value if dotted_key='a.b.c'."""
-    keys = dotted_key.split(".")
-    d = cfg
-    for k in keys[:-1]:
-        if k not in d:
-            d[k] = {}   # create if missing
-        d = d[k]
-    d[keys[-1]] = value
-
 def apply_overrides(cfg, args):
     for key, val in vars(args).items():
         if val is None or key == "config":
@@ -118,9 +108,3 @@ def set_deep(cfg, dotted_key, value):
         d = d[k]
     d[keys[-1]] = value
 
-def apply_overrides(cfg, args):
-    for key, val in vars(args).items():
-        if val is None or key == "config":
-            continue
-        set_deep(cfg, key, val)
-    return cfg
