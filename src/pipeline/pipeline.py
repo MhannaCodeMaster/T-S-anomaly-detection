@@ -93,6 +93,8 @@ def main():
                                         k=30, tau=0.35, SIM_MIN=0.15, device='cuda')
             
             label = get_mvtec_label(img_path)
+            
+            
             all_true.append(label)
             all_pred.append(res2["image_pred"])
             all_score.append(res2["image_score"])
@@ -514,6 +516,16 @@ def triplet_classifier_knn_okonly(
     crop_preds  = (anomaly >= PRED_THRESHOLD).long().tolist()
     image_score = float(anomaly.max().item())
     image_pred  = int(image_score >= PRED_THRESHOLD)
+
+    # ---- Visualization ----
+    img = cv2.imread(image_paths[0])
+    if img is not None:
+        for (x, y, w_box, h_box), pred, score in zip(boxes, crop_preds, crop_scores):
+            color = (0,0,255) if pred==1 else (0,255,0)
+            cv2.rectangle(img, (x,y), (x+w_box,y+h_box), color, 2)
+            cv2.putText(img, f"{score:.2f}", (x, max(0,y-5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        cv2.imwrite("result1.png", img)
 
     return {
         "crop_scores": crop_scores,
