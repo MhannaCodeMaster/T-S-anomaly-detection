@@ -1,3 +1,4 @@
+import argparse
 import os
 import copy
 from types import SimpleNamespace
@@ -5,17 +6,19 @@ from types import SimpleNamespace
 import torch
 from torchvision import transforms
 import numpy as np
+from sklearn.model_selection import train_test_split
 
 from src.student_teacher.teacher import ResNet18_MS3
 from src.data.data_utils import *
 
 from src.utils.utils import *
+from src.data.datasets import *
 from src.paths import get_paths
 
 def main():
     print("Student model training started...")
     args = load_args()
-    cfg = load_config()
+    cfg = load_config(args.config)
     cfg = override_config(cfg, args)
     paths = get_paths(cfg.category, 'student')
     
@@ -35,15 +38,21 @@ def main():
     np.random.seed(0)
     torch.manual_seed(0)
     
-    transform = transforms.Compose([
+    tr_transform = transforms.Compose([
         transforms.Resize([256, 256]),
         transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0.02),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
+
+    val_transform = transforms.Compose([
+        transforms.Resize([256, 256]),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
     
     # train student model
-    train_loader, val_loader = load_st_train_datasets(transform, cfg)
+    train_loader, val_loader = load_st_train_datasets(tr_transform, val_transform, cfg)
     best_student = train_student(teacher, student, train_loader, val_loader, cfg, paths)
     # Compute calibration stats on training
     mean, std = compute_train_calibration_stats(teacher, best_student, train_loader, paths, device="cuda")
@@ -165,10 +174,25 @@ def compute_train_calibration_stats(teacher, student, train_loader, paths, devic
     print(f"Calibration saved μ={mean:.6g}, σ={std:.6g} -> {file_path}")
     return mean, std
 
+
+def load_st_train_datasets(tr_transform, val_transform, cfg):
+    print("Loading T-S datasets...")
+    image_list = sorted(glob(os.path.join(cfg.dataset, cfg.category, 'train', 'good', '*.png')))
+    train_image_list, val_image_list = train_test_split(image_list, test_size=0.2, random_state=0)
+    train_dataset = MVTecDataset(train_image_list, transform=tr_transform)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, drop_last=False)
+    print("Training dataset loaded")
+    val_dataset = MVTecDataset(val_image_list, transform=val_transform)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False)
+    print("Validation dataset loaded")
+    print("T-S datasets loading completed.")
+    return train_loader, val_loader
+
 def load_args():
     p = argparse.ArgumentParser(description="Anomaly Detection")
     #----- Required args -----#
     p.add_argument("--dataset", required=True, type=str, help="Path to mvtec dataset root directory")
+    p.add_argument("--config", required=True, type=str, help="Path to the config file")
     
     #----- Optional args -----#
     p.add_argument("--category", required=False, type=str, help="Dataset category (e.g., cable, hazelnut)")
@@ -180,17 +204,16 @@ def load_args():
     args = p.parse_args()
     return args
 
-def load_config():
-    CONF_PATH = "../../conf/student.yaml"
+def load_config(path):
     try:
-        with open(CONF_PATH, 'r') as file:
+        with open(path, 'r') as file:
             try:
                 config = yaml.safe_load(file)
             except yaml.YAMLError as exc:
                 print(f"Error parsing YAML file: {exc}")
                 raise
     except FileNotFoundError:
-        print(f"Config file not found: {CONF_PATH}")
+        print(f"Config file not found: {path}")
         raise
     except Exception as e:
         print(f"Unexpected error reading config file: {e}")

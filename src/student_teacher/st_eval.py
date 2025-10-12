@@ -1,12 +1,14 @@
 import argparse
 
-from data.datasets import MVTecDataset
+from src.data.datasets import MVTecDataset
 import torch
 from torchvision import transforms
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
 import numpy as np
+import matplotlib.pyplot as plt
+import cv2
 
 from src.student_teacher.teacher import ResNet18_MS3
 
@@ -17,7 +19,8 @@ def main():
     teacher = ResNet18_MS3(pretrained=True)
     student = ResNet18_MS3(pretrained=False)
 
-    st_saved_dict = torch.load(args.st_path)
+    st_path = f'{args.st_path}/student_best.pth.tar'
+    st_saved_dict = torch.load(st_path)
     student.load_state_dict(st_saved_dict['state_dict'])
     # Fetching calibration stats that were extracted during stduent training
     mean, std = load_calibration_stats(args.st_path)
@@ -35,10 +38,61 @@ def main():
     # Getting the error map
     err_map = get_error_map(teacher, student, loader)
 
+    heatmap = err_map[0]
+
+    # Normalize for visualization
+    heatmap_norm = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min())
+    paths, img_tensor = next(iter(loader))
+    img = img_tensor[0].permute(1, 2, 0).cpu().numpy()
+    img = (img - img.min()) / (img.max() - img.min())
+    
+    heatmap_resized = cv2.resize(heatmap_norm, (img.shape[1], img.shape[0]))
+
+    heatmap_color = cv2.applyColorMap(np.uint8(255 * heatmap_resized), cv2.COLORMAP_JET)
+    heatmap_color = cv2.cvtColor(heatmap_color, cv2.COLOR_BGR2RGB)
+    overlay = (0.6 * heatmap_color / 255.0 + 0.4 * img)
+    overlay = np.clip(overlay, 0, 1)
+    
+    # Adding clibration
+    eps=1e-6
+    # Z-score calibration using scalar mean and std
+    hm_calibrated = (heatmap_resized - mean) / max(std, eps)
+    # Keep only positive deviations (optional, highlights anomalies)
+    hm_calibrated = np.maximum(hm_calibrated, 0.0)
+    # Normalize to [0,1] for visualization
+    hm_cal = (hm_calibrated - hm_calibrated.min()) / (hm_calibrated.max() - hm_calibrated.min() + eps)
+    hm_cal_color = cv2.applyColorMap(np.uint8(255 * hm_cal), cv2.COLORMAP_JET)
+    hm_cal_color = cv2.cvtColor(hm_cal_color, cv2.COLOR_BGR2RGB)
+    overlay_cal = (0.6 * hm_cal_color / 255.0 + 0.4 * img)
+    overlay_cal = np.clip(overlay, 0, 1)
+    
+    # ---- Visualization ----
+    plt.figure(figsize=(12, 4))
+    plt.subplot(1, 4, 1)
+    plt.title("Original Image")
+    plt.imshow(img)
+    plt.axis("off")
+
+    plt.subplot(1, 4, 2)
+    plt.title("Error Heatmap")
+    plt.imshow(heatmap_resized, cmap="jet")
+    plt.axis("off")
+
+    plt.subplot(1, 4, 3)
+    plt.title("Overlay (Anomaly Localization)")
+    plt.imshow(overlay)
+    plt.axis("off")
+
+    plt.subplot(1, 4, 4)
+    plt.title("Overlay after calibration")
+    plt.imshow(overlay_cal)
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
 
 
 @torch.no_grad()
-def get_error_map(teacher, student, loader_or_batch):
+def get_error_map(teacher, student, loader_or_batch, device = "cuda"):
     """
     Compute anomaly score maps at 64x64 for either:
       - a full DataLoader that yields (paths, images)
@@ -46,8 +100,8 @@ def get_error_map(teacher, student, loader_or_batch):
 
     Returns: np.ndarray of shape [N, 64, 64]
     """
-    teacher.eval()
-    student.eval()
+    teacher.to(device).eval()
+    student.to(device).eval()
 
     # Figure out what we got (full loader or a single batch)
     if hasattr(loader_or_batch, "dataset"):
@@ -98,7 +152,7 @@ def load_datasets(img_path, transform):
     return loader
 
 def load_calibration_stats(cali_path):
-    path = f'{cali_path}/calibration_stats'
+    path = f'{cali_path}/calib_stats.npz'
     try:
         stats = np.load(path)
         mean = stats['mean']
@@ -116,9 +170,8 @@ def load_args():
     p.add_argument("--category", required=True, type=str, help="Dataset category (e.g., cable, hazelnut)")
     p.add_argument("--st_path", required=True, type=str, help="Path to the student model folder")
 
-
     args = p.parse_args()
     return args
 
-if __name__ == 'main':
+if __name__ == "__main__":
     main()
