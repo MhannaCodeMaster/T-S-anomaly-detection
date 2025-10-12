@@ -1,3 +1,4 @@
+import argparse
 import datetime
 
 import torch
@@ -8,7 +9,7 @@ import matplotlib.pyplot as plt
 import cv2
 
 from src.student_teacher.teacher import ResNet18_MS3
-from src.student_teacher.st_eval import load_args, load_calibration_stats, load_datasets, get_error_map
+from src.student_teacher.st_eval import load_calibration_stats, load_datasets, get_error_map
 from src.utils.utils import *
 
 def main():
@@ -36,7 +37,7 @@ def main():
     # Getting the error map
     err_map = get_error_map(teacher, student, loader)
 
-    crop_images(err_map, loader, mean, std, paths)
+    crop_images(err_map, loader, mean, std)
 
 
 def crop_images(loss_map, loader, mean, std, args):
@@ -156,6 +157,26 @@ def crop_images(loss_map, loader, mean, std, args):
 
     print("\nCropping images completed.",end="\n")
     return crops, boxes, orig_img_path
+
+def load_args():
+    p = argparse.ArgumentParser(description="Anomaly Detection")
+    #----- Required args -----#
+    p.add_argument("--img_path", required=True, type=str, help="Path to the image")
+    p.add_argument("--category", required=True, type=str, help="Dataset category (e.g., cable, hazelnut)")
+    p.add_argument("--st_path", required=True, type=str, help="Path to the student model folder")
+    
+    #----- Optional args -----#
+    p.add_argument("--h_th", required=True, default=95, type=float, help="Heatmap threshold")
+    p.add_argument("--box_min_area", required=False, default=1000, type=int, help="Minimum box area")
+    p.add_argument("--conf_score", required=False, default=0.1, type=float, help="Confidence score for NMS")
+    p.add_argument("--nms_thr", required=False, default=0.4, type=float, help="NMS threshold")
+    p.add_argument("--expand_box", required=False, default=0.1, type=float, help="Expand box %")
+    p.add_argument("--tolerance", required=False, default=0.7, type=float, help="Box tolerance")
+    p.add_argument("--merge_box", required=False, default=0, type=str, help="Enable merge boxes (0 or 1)")
+    p.add_argument("--merge_gap", required=False, default=1, type=float, help="Merge gap between boxes")
+
+    args = p.parse_args()
+    return args
 
 
 if __name__ == "__main__":
