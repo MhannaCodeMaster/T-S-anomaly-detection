@@ -6,7 +6,6 @@ import copy
 import torch
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
-import torchvision.transforms.functional as TF
 import random
 from sklearn.metrics import precision_recall_curve, f1_score, roc_auc_score
 from sklearn.neighbors import NearestNeighbors
@@ -71,6 +70,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     LR           = float(cfg.lr)
     WGT_DECAY    = float(cfg.weight_decay)
     TRIPLETPATH  = paths.checkpoint
+    MINE_MODE    = cfg.mine_mode
 
     # adaptive-margin controller
     M_MIN, M_MAX          = 0.30, 0.80
@@ -78,24 +78,27 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
     EMA_BETA              = 0.8           # smoothing for val_active
     TARGET_LOW, TARGET_HIGH = 0.30, 0.40  # we want ~30–40% active on val
     COOLDOWN_EPOCHS       = 3
-    cooldown              = 0
-    ema_val_active        = None
-
-    # early stopping
     ES_PATIENCE  = int(getattr(cfg, "es_patience", 20))       # epochs with no meaningful improvement
-    ES_MIN_DELTA = float(getattr(cfg, "es_min_delta", 1e-3))    # minimum improvement in val_loss
+    ES_MIN_DELTA = float(getattr(cfg, "es_min_delta", 1e-4))    # minimum improvement in val_loss
     best_val_loss = float("inf")
     es_bad_epochs = 0
 
     best_model = None
     
-    optimizer    = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WGT_DECAY)
-    sched        = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TOTAL_EPOCHS)
+    # optimizer    = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WGT_DECAY)
+    # discriminative LRs if not freezing
+    optimizer = torch.optim.Adam([
+        {"params": model.backbone.parameters(), "lr": 1e-4},
+        {"params": model.head.parameters(),     "lr": 3e-4},
+    ], weight_decay=WGT_DECAY)
+    
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TOTAL_EPOCHS)
+    
     triplet_loss = torch.nn.TripletMarginWithDistanceLoss(
         distance_function=lambda a,b: 1 - F.cosine_similarity(a,b),
         margin=MARGIN)
+    
     state = MarginCtrlState(margin=MARGIN)
-    mine_mode = cfg.mine_mode
     
     for epoch in range(TOTAL_EPOCHS):
         print(f"Epoch [{epoch+1}/{TOTAL_EPOCHS}]")
@@ -114,7 +117,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             # we take one anchor, one positive, and one negative
             # a, p, n = mine_batch(z.detach(), y, MARGIN)
             # a, p, n = mine_triplets(z.detach(), y)
-            a, p, n = mine_triplets_v1(z.detach(), y, mode=mine_mode, margin=MARGIN)
+            a, p, n = mine_triplets_v1(z.detach(), y, mode=MINE_MODE, margin=MARGIN)
             if len(a) == 0:
                 continue
             
@@ -159,7 +162,7 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
                 
                 # a, p, n = mine_batch(z.detach(), y, MARGIN)
                 # a, p, n = mine_triplets(z.detach(), y)
-                a, p, n = mine_triplets_v1(z.detach(), y, margin=MARGIN)
+                a, p, n = mine_triplets_v1(z.detach(), y, mode=MINE_MODE, margin=MARGIN)
                 if len(a) == 0:
                     continue
                 
@@ -202,22 +205,25 @@ def train_triplet(model , train_loader, val_loader, cfg, paths):
             print(f"[Margin] {why}; margin -> {triplet_loss.margin:.3f}")
                 
         #----- best/early stop -----
-        improved = (best_val_loss - avg_val_loss) > ES_MIN_DELTA
-        if improved:
-            best_val_loss = avg_val_loss
+        primary = auroc  # or pr_auc if you compute it
+        improved = primary > (best_score + ES_MIN_DELTA)
+        tied     = abs(primary - best_score) <= ES_MIN_DELTA and avg_val_loss < best_val_loss
+
+        if improved or tied:
+            best_score   = max(best_score, primary)
+            best_val_loss = min(best_val_loss, avg_val_loss)
             es_bad_epochs = 0
             best_model = copy.deepcopy(model)
             torch.save({'category': CATEGORY, 'state_dict': model.state_dict()}, os.path.join(TRIPLETPATH))
         else:
             es_bad_epochs += 1
 
-        # ----- early stopping -----
         if es_bad_epochs >= ES_PATIENCE:
-            print(f"Early stopping: no val_loss improvement > {ES_MIN_DELTA} for {ES_PATIENCE} epochs.")
+            print(f"Early stopping on validation AUROC (no improvement > {ES_MIN_DELTA} for {ES_PATIENCE} epochs).")
             break
 
     print("Triplet learning completed.")
-    return best_model
+    return best_model if best_model is not None else model
 
 @torch.no_grad()
 def mine_triplets(z, y):
@@ -377,7 +383,7 @@ def mining_active(z, y, margin):
     if total == 0:
         return 0.0
     return act_count, total
- 
+
 def load_tl_training_datasets(cfg, paths):
     print("Loading triplet training datasets...")
     BATCH_SIZE = cfg.batch_size
@@ -419,7 +425,7 @@ def load_tl_training_datasets(cfg, paths):
     
     img_size = 224
     
-    train_ok_tf = transforms.Compose([
+    train_tf = transforms.Compose([
         transforms.ColorJitter(brightness=0.2, contrast=0.25, saturation=0.20, hue=0.02),
         transforms.RandomAutocontrast(p=0.2),
         transforms.RandomAdjustSharpness(sharpness_factor=1.5, p=0.2),
@@ -432,20 +438,12 @@ def load_tl_training_datasets(cfg, paths):
                 scale=(0.85, 1.25),          # <1 = zoom-in-ish; >1 = zoom-out
                 shear=None,
                 interpolation=InterpolationMode.BILINEAR,
-                fill=0                        # or tuple of means if you prefer
+                fill=0
             )
         ], p=0.80),
         transforms.RandomApply([transforms.RandomPerspective(distortion_scale=0.15, p=1.0)], p=0.20),
         transforms.ToTensor(),
         transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
-    ])
-
-    train_tf = transforms.Compose([
-        transforms.Resize((img_size, img_size)),
-        transforms.RandomHorizontalFlip(0.5),
-        transforms.RandomRotation(12, fill=0),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485,0.456,0.406], [0.229,0.224,0.225]),
     ])
 
     val_tf = transforms.Compose([
@@ -455,7 +453,7 @@ def load_tl_training_datasets(cfg, paths):
     ])
     
     # Building the datasets
-    train_ok_ds    = PatchDataset(train_ok_df, train_ok_tf, "ok", crops_root=cfg.dataset)
+    train_ok_ds    = PatchDataset(train_ok_df, train_tf, "ok", crops_root=cfg.dataset)
     train_notok_ds = PatchDataset(train_notok_df, train_tf, "not_ok", crops_root=cfg.dataset)
     val_ok_ds      = PatchDataset(val_ok_df, val_tf, "ok", crops_root=cfg.dataset)
     val_notok_ds   = PatchDataset(val_notok_df, val_tf, "not_ok", crops_root=cfg.dataset)
@@ -464,6 +462,7 @@ def load_tl_training_datasets(cfg, paths):
     val_dataset   = torch.utils.data.ConcatDataset([val_ok_ds, val_notok_ds])
     len_ok = len(train_ok_ds)
     len_ng = len(train_notok_ds)
+    
     train_sampler = StratifiedTwoClassBatchSampler(len_ok=len_ok, len_ng=len_ng, batch_size=BATCH_SIZE, drop_last=True)   
 
     train_loader = DataLoader(train_dataset, batch_sampler=train_sampler,

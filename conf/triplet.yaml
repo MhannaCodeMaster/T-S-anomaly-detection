@@ -7,4 +7,4 @@ lr: 0.001
 weight_decay: 1e-4
 margin: 0.3
 es_patience: 20
-es_min_delta: 0.001
+es_min_delta: 0.0004
